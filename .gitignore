@@ -215,3 +215,8 @@ pip-log.txt
 #Mr Developer
 .mr.developer.cfg
 /wx/.vscode
+
+# Local build caches
+.dotnet-home/
+.tmpobj/
+*.lscache

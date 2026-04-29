@@ -1,6 +1,7 @@
 ﻿using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Buffers.Binary;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.ComTypes;
@@ -15,6 +16,15 @@ namespace NSmartProxy
 {
     public static class StringUtil
     {
+        [ThreadStatic]
+        private static SnappyCompressor _snappyCompressor;
+
+        [ThreadStatic]
+        private static SnappyDecompressor _snappyDecompressor;
+
+        private static SnappyCompressor SnappyCompressorInstance => _snappyCompressor ??= new SnappyCompressor();
+        private static SnappyDecompressor SnappyDecompressorInstance => _snappyDecompressor ??= new SnappyDecompressor();
+
         /// <summary>
         /// 整型转双字节
         /// </summary>
@@ -23,9 +33,12 @@ namespace NSmartProxy
         public static byte[] IntTo2Bytes(int number)
         {
             byte[] bytes = new byte[2];
-            bytes[0] = (byte)(number / 256);
-            bytes[1] = (byte)(number % 256);
+            WriteIntTo2Bytes(bytes, number);
             return bytes;
+        }
+        public static void WriteIntTo2Bytes(Span<byte> destination, int number)
+        {
+            BinaryPrimitives.WriteUInt16BigEndian(destination, checked((ushort)number));
         }
 
         /// <summary>
@@ -37,9 +50,7 @@ namespace NSmartProxy
         public static byte[] ClientIDAppIdToBytes(int clientID, int appid)
         {
             byte[] bytes = new byte[3];
-            byte[] clientbytes = IntTo2Bytes(clientID);
-            bytes[0] = clientbytes[0];
-            bytes[1] = clientbytes[1];
+            WriteIntTo2Bytes(bytes.AsSpan(0, 2), clientID);
             bytes[2] = (byte)appid;
 
             return bytes;
@@ -58,7 +69,19 @@ namespace NSmartProxy
 
         public static int DoubleBytesToInt(byte[] bytes)
         {
-            return (bytes[0] << 8) + bytes[1];
+            return DoubleBytesToInt(bytes.AsSpan());
+        }
+        public static int DoubleBytesToInt(ReadOnlySpan<byte> bytes)
+        {
+            return BinaryPrimitives.ReadUInt16BigEndian(bytes);
+        }
+        public static void WriteIntTo4Bytes(Span<byte> destination, int number)
+        {
+            BinaryPrimitives.WriteInt32LittleEndian(destination, number);
+        }
+        public static int ReadInt32(ReadOnlySpan<byte> source)
+        {
+            return BinaryPrimitives.ReadInt32LittleEndian(source);
         }
 
         public static string ToASCIIString(this byte[] bytes)
@@ -221,10 +244,9 @@ namespace NSmartProxy
         // < returns ></ returns >
         public static byte[] DecompressInSnappy(byte[] compressed, int offset, int length)
         {
-            SnappyDecompressor sd = new SnappyDecompressor();
             try
             {
-                return sd.Decompress(compressed, offset, length);
+                return SnappyDecompressorInstance.Decompress(compressed, offset, length);
             }
             catch (Exception ex)
             {
@@ -232,6 +254,15 @@ namespace NSmartProxy
                 //啥情況？
                 return null;
             }
+        }
+
+        public static PooledByteBuffer DecompressInSnappyToRented(byte[] compressed, int offset, int length)
+        {
+            var decompressor = SnappyDecompressorInstance;
+            var sizeHeader = decompressor.ReadUncompressedLength(compressed, offset);
+            byte[] output = System.Buffers.ArrayPool<byte>.Shared.Rent(sizeHeader[0]);
+            decompressor.Decompress(compressed, sizeHeader[1], length + offset - sizeHeader[1], output, 0, sizeHeader[0]);
+            return new PooledByteBuffer(output, sizeHeader[0]);
         }
 
         // <summary>
@@ -243,13 +274,21 @@ namespace NSmartProxy
         // < returns ></ returns >
         public static CompressedBytes CompressInSnappy(byte[] uncompressed, int offset, int uncompressedLength)
         {
-            SnappyCompressor sc = new SnappyCompressor();
-
             //var bytes = Encoding.ASCII.GetBytes("HelloWor134ertegsdfgsfdgsdfgsdfgsfdgsdfgsdfgsdfgsdfgdsfgsdfgdsfgdfgdsfgld");
-            byte[] outBytes = new byte[sc.MaxCompressedLength(uncompressed.Length)];
+            byte[] outBytes = new byte[SnappyCompressorInstance.MaxCompressedLength(uncompressedLength)];
 
-            int actualLength = sc.Compress(uncompressed, 0, uncompressedLength, outBytes);
+            int actualLength = SnappyCompressorInstance.Compress(uncompressed, offset, uncompressedLength, outBytes);
             return new CompressedBytes() { ContentBytes = outBytes, Length = actualLength };
+        }
+
+        public static int GetMaxCompressedLengthInSnappy(int uncompressedLength)
+        {
+            return SnappyCompressorInstance.MaxCompressedLength(uncompressedLength);
+        }
+
+        public static int CompressInSnappy(byte[] uncompressed, int offset, int uncompressedLength, byte[] output)
+        {
+            return SnappyCompressorInstance.Compress(uncompressed, offset, uncompressedLength, output);
         }
 
 
@@ -275,7 +314,9 @@ namespace NSmartProxy
 
         internal static byte[] IntTo4Bytes(int length)
         {
-            return BitConverter.GetBytes(length);
+            byte[] bytes = new byte[4];
+            WriteIntTo4Bytes(bytes, length);
+            return bytes;
         }
 
 

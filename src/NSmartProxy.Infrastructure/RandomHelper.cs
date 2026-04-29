@@ -75,16 +75,20 @@ namespace NSmartProxy.Infrastructure
         static public string NextString(int length, bool hasSpecialChara = true)
         {
             byte[] b = new byte[4];
-            new System.Security.Cryptography.RNGCryptoServiceProvider().GetBytes(b);
+            using (var rng = System.Security.Cryptography.RandomNumberGenerator.Create())
+            {
+                rng.GetBytes(b);
+            }
+
             Random r = new Random(BitConverter.ToInt32(b, 0));
-            string s = null;
+            var builder = new StringBuilder(length);
             string str = @"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
             if (hasSpecialChara) str += "!#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
             for (int i = 0; i < length; i++)
             {
-                s += str.Substring(r.Next(0, str.Length - 1), 1);
+                builder.Append(str[r.Next(0, str.Length)]);
             }
-            return s;
+            return builder.ToString();
         }
 
         /// <summary>

@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -208,16 +209,17 @@ namespace NSmartProxy
 
         public static async Task<TcpClient> ConnectAndSend(string addess, int port, ServerProtocol protocol, byte[] data, bool isClose = false)
         {
-            TcpClient configClient = new TcpClient();
+            TcpClient configClient = null;
             bool isConnected = false;
             for (int j = 0; j < 3; j++)
             {
-                var delayDispose = Task.Delay(Global.DefaultConnectTimeout).ContinueWith(_ => configClient.Dispose());
+                configClient?.Dispose();
+                configClient = new TcpClient();
                 var connectAsync = configClient.ConnectAsync(addess, port);
-                //超时则dispose掉
-                var completedTask = await Task.WhenAny(delayDispose, connectAsync);
-                if (!connectAsync.IsCompleted)
+                var completedTask = await Task.WhenAny(connectAsync, Task.Delay(Global.DefaultConnectTimeout));
+                if (completedTask != connectAsync)
                 {
+                    configClient.Dispose();
                     Console.WriteLine("ConnectAndSend连接超时,5秒后重试");
                     await Task.Delay(5000);
                 }
@@ -230,7 +232,7 @@ namespace NSmartProxy
             if (!isConnected) { Console.WriteLine("重试次数达到限制。"); throw new Exception("重试次数达到限制。"); }
 
             var configStream = configClient.GetStream();
-            await configStream.WriteAsync(new byte[] { (byte)protocol }, 0, 1);
+            configStream.WriteByte((byte)protocol);
             await configStream.WriteAndFlushAsync(data, 0, data.Length);
             //Console.Write(protocol.ToString() + " proceed.");
             Console.Write("->");
@@ -281,7 +283,14 @@ namespace NSmartProxy
 
             try
             {
-                tcpClient.Client.IOControl(IOControlCode.KeepAliveValues, GetKeepAlivePkg(1, 10000, 20000), null);
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    tcpClient.Client.IOControl(IOControlCode.KeepAliveValues, GetKeepAlivePkg(1, 10000, 20000), null);
+                }
+                else
+                {
+                    tcpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+                }
             }
             catch (PlatformNotSupportedException)
             {

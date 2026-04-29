@@ -58,12 +58,14 @@ namespace NSmartProxy
         /// <returns></returns>
         public async Task<TcpClient> PopClientAsync()
         {
-            TcpClient tcpClient = null;
-            var receiveTask = Task.Run(async () => { tcpClient = await TcpClientBlocks.ReceiveAsync(); });
-            await Task.WhenAny(receiveTask, Task.Delay(Global.DefaultPopClientTimeout));
-            //if (!isReceived) return -1;
-            return tcpClient;
-            //return await TcpClientBlocks.ReceiveAsync();
+            var receiveTask = TcpClientBlocks.ReceiveAsync();
+            var completedTask = await Task.WhenAny(receiveTask, Task.Delay(Global.DefaultPopClientTimeout));
+            if (completedTask != receiveTask)
+            {
+                return null;
+            }
+
+            return await receiveTask;
         }
 
         /// <summary>

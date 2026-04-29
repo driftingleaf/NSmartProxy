@@ -115,7 +115,10 @@ namespace NSmartProxy.Authorize
             await stream.WriteAsync(StringUtil.IntTo2Bytes(Token.Length), 0, 2);//2token长度 长度2
             await stream.WriteAndFlushAsync(ASCIIEncoding.ASCII.GetBytes(Token));//3token
             byte[] bytes = new byte[1];
-            await stream.ReadAsync(bytes, 0, 1);
+            if (!await stream.TryReadExactlyAsync(bytes))
+            {
+                return AuthState.Error;
+            }
             return (AuthState)bytes[0];
         }
 
@@ -129,7 +132,7 @@ namespace NSmartProxy.Authorize
             var stream = Client.GetStream();
             //标识 1
             var protocolBytes = new byte[1];//ArrayPool<byte>.Shared.Rent(1);
-            if (await stream.ReadAsync(protocolBytes, 0, protocolBytes.Length) == 0)
+            if (!await stream.TryReadExactlyAsync(protocolBytes))
             {
                 ErrorMessage += "读取到0字节，客户端已关闭？";
                 return null;
@@ -141,7 +144,7 @@ namespace NSmartProxy.Authorize
 
             //2.token长度 2
             var lengthBytes = new byte[2]; //ArrayPool<byte>.Shared.Rent(2);
-            if (await stream.ReadAsync(lengthBytes, 0, lengthBytes.Length) == 0)
+            if (!await stream.TryReadExactlyAsync(lengthBytes))
             {
                 ErrorMessage += "读取到0字节，客户端已关闭？";
                 return null;
@@ -150,7 +153,7 @@ namespace NSmartProxy.Authorize
 
             //3.token校验
             var tokenBytes = new byte[tokenLength];//ArrayPool<byte>.Shared.Rent(tokenLength);
-            if (await stream.ReadAsync(tokenBytes, 0, tokenBytes.Length) == 0)
+            if (!await stream.TryReadExactlyAsync(tokenBytes))
             {
                 ErrorMessage += "获取token失败？";
                 return null;

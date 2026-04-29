@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <TargetFrameworks>net6.0</TargetFrameworks>
+    <TargetFramework>net10.0</TargetFramework>
     <ApplicationIcon />
     <StartupObject />
   </PropertyGroup>
@@ -15,8 +15,6 @@
 
   <ItemGroup>
     <PackageReference Include="litedb" Version="5.0.21" />
-    <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
-    <PackageReference Include="System.Threading.Tasks.Dataflow" Version="8.0.1" />
   </ItemGroup>
 
   <ItemGroup>

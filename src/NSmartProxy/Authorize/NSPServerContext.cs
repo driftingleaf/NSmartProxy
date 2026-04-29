@@ -160,7 +160,7 @@ namespace NSmartProxy.Authorize
                 if (File.Exists(path))
                 {
                     //从文件里加载证书
-                    PortCertMap[port] = X509Certificate2.CreateFromCertFile(path);
+                    PortCertMap[port] = X509CertificateLoader.LoadCertificateFromFile(path);
                 }
                 else
                 {

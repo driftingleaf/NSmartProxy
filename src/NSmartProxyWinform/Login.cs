@@ -93,7 +93,7 @@ namespace NSmartProxyWinform
             btnLogin.Enabled = false;
             NSPDispatcher dispatcher = new NSPDispatcher(baseEndPoint);
             var connectAsync = dispatcher.LoginFromClient(tbxUser.Text, tbxPassword.Text);
-            var delayDispose = Task.Delay(TimeSpan.FromSeconds(5000));
+            var delayDispose = Task.Delay(TimeSpan.FromMilliseconds(5000));
             var comletedTask = Task.WhenAny(delayDispose, connectAsync).Result;
             if (!connectAsync.IsCompleted) //超时
             {

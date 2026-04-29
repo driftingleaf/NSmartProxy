@@ -305,11 +305,13 @@ namespace NSmartProxy
                     var nspApp = nspAppGroup.ActivateApp;
                     // method   ip(D)    port      buffer(D)
                     // udp      X        2         X
-                    tunnelStream.Write(new byte[] { (byte)ControlMethod.UDPTransfer }, 0, 1);
+                    tunnelStream.WriteByte((byte)ControlMethod.UDPTransfer);
                     //tunnelStream.Write(StringUtil.IntTo2Bytes(nspApp.AppId));
                     //tunnelStream.Write(StringUtil.IntTo2Bytes(receiveResult.Buffer.Length), 0, 2);
                     await tunnelStream.WriteDLengthBytes(receiveResult.RemoteEndPoint.Address.ToString());
-                    tunnelStream.Write(StringUtil.IntTo2Bytes(receiveResult.RemoteEndPoint.Port));
+                    Span<byte> portBytes = stackalloc byte[2];
+                    StringUtil.WriteIntTo2Bytes(portBytes, receiveResult.RemoteEndPoint.Port);
+                    tunnelStream.Write(portBytes);
                     await tunnelStream.WriteDLengthBytes(receiveResult.Buffer);
                     Logger.Debug($"UDP数据包已发送{receiveResult.Buffer.Length}字节,remote ep:{receiveResult.RemoteEndPoint.ToString()}");
                     lock (receiveUdpLocker)
@@ -361,7 +363,10 @@ namespace NSmartProxy
                     byte[] portByte = new byte[2];
                     byte[] returnBuffer = null;
 
-                    await providerStream.ReadAsync(portByte, 0, 2);
+                    if (await providerStream.ReadNextSTLengthBytes(portByte) != portByte.Length)
+                    {
+                        break;
+                    }
                     returnBuffer = await providerStream.ReadNextDLengthBytes();
 
                     //if (readBytes > 0)
@@ -418,6 +423,7 @@ namespace NSmartProxy
 
             try
             {
+                consumerClient.NoDelay = true;
 
                 if (nspAppGroup.ProtocolInGroup == Protocol.HTTP /*|| nspAppGroup.ProtocolInGroup == Protocol.HTTPS*/)
                 {//不论是http协议还是https协议，有证书就加密
@@ -431,7 +437,7 @@ namespace NSmartProxy
                     { Server.Logger.Debug("未在请求中找到主机名"); return; }
 
                     string host = tp.Item1;
-                    restBytes = Encoding.UTF8.GetBytes(tp.Item2); //预发送bytes，因为这部分用来抓host消费掉了
+                    restBytes = tp.Item2; //预发送bytes，因为这部分用来抓host消费掉了
                     //restBytesLength = tp.Item3;
                     s2pClient = await ConnectionManager.GetClientForTcp(consumerPort, host);
                     if (nspAppGroup.ContainsKey(host))
@@ -468,6 +474,7 @@ namespace NSmartProxy
             }
 
             ServerContext.ConnectCount += 1;
+            s2pClient.NoDelay = true;
 
             //TODO 如果NSPApp中是http，则需要进一步分离，通过GetHTTPClient来分出对应的client以建立隧道
             //II.弹出先前已经准备好的socket
@@ -484,10 +491,11 @@ namespace NSmartProxy
             //TODO 5 这里会出错导致无法和客户端通信
             try
             {
-                var bytes = new List<byte> { (byte)ControlMethod.TCPTransfer };
-                bytes.AddRange(BitConverter.GetBytes(transfering.GetHashCode()));
+                byte[] headerBytes = new byte[5];
+                headerBytes[0] = (byte)ControlMethod.TCPTransfer;
+                StringUtil.WriteIntTo4Bytes(headerBytes.AsSpan(1, 4), transfering.GetHashCode());
                 //向客户端发送一个主动建立TCP连接的标记
-                await providerStream.WriteAndFlushAsync(bytes.ToArray(), 0, 5);//双端标记S0001
+                await providerStream.WriteAndFlushAsync(headerBytes.AsMemory());//双端标记S0001
             }
             catch
             {
@@ -504,7 +512,7 @@ namespace NSmartProxy
             // if tcp
             try
             {
-                await OpenTcpTransmission(consumerStream, providerStream, nspApp, transfering.Token);
+                await OpenTcpTransmission(consumerClient, s2pClient, consumerStream, providerStream, nspApp, transfering.Token);
             }
             finally
             {
@@ -548,7 +556,7 @@ namespace NSmartProxy
                 int protoRequestLength = 1;
                 byte[] protoRequestBytes = new byte[protoRequestLength];
 
-                int resultByte0 = await nstream.ReadAsync(protoRequestBytes, 0, protoRequestBytes.Length, Global.DefaultConnectTimeout);
+                int resultByte0 = await nstream.ReadNextSTLengthBytes(protoRequestBytes);
                 if (resultByte0 < 1)
                 {
                     Server.Logger.Debug("服务端read失败，关闭连接");
@@ -593,7 +601,7 @@ namespace NSmartProxy
             Server.Logger.Debug("Now processing Disconnet Client protocol....");
             NetworkStream nstream = client.GetStream();
             byte[] appRequestBytes = new byte[4];
-            int resultByte = await nstream.ReadAsync(appRequestBytes, 0, appRequestBytes.Length, Global.DefaultConnectTimeout);
+            int resultByte = await nstream.ReadNextSTLengthBytes(appRequestBytes);
             //Server.Logger.Debug("appRequestBytes received.");
             if (resultByte < 1)
             {
@@ -601,7 +609,7 @@ namespace NSmartProxy
                 client.Client.Close();
                 return;
             }
-            int tokenId = BitConverter.ToInt32(appRequestBytes, 0);
+            int tokenId = StringUtil.ReadInt32(appRequestBytes);
             try
             {
                 transferTokenDic[tokenId].Cancel();
@@ -620,7 +628,7 @@ namespace NSmartProxy
             NetworkStream nstream = client.GetStream();
             int closeClientLength = 2;
             byte[] appRequestBytes = new byte[closeClientLength];
-            int resultByte = await nstream.ReadAsync(appRequestBytes, 0, appRequestBytes.Length, Global.DefaultConnectTimeout);
+            int resultByte = await nstream.ReadNextSTLengthBytes(appRequestBytes);
             //Server.Logger.Debug("appRequestBytes received.");
             if (resultByte < 1)
             {
@@ -643,7 +651,7 @@ namespace NSmartProxy
             NetworkStream nstream = client.GetStream();
             int heartBeatLength = 2;
             byte[] appRequestBytes = new byte[heartBeatLength];
-            int resultByte = await nstream.ReadAsync(appRequestBytes, 0, appRequestBytes.Length, Global.DefaultConnectTimeout);
+            int resultByte = await nstream.ReadNextSTLengthBytes(appRequestBytes);
             if (resultByte < 1)
             {
                 CloseClient(client);
@@ -656,7 +664,7 @@ namespace NSmartProxy
             if (ServerContext.Clients.ContainsKey(clientID))
             {
                 //2.2 响应ACK 
-                await nstream.WriteAndFlushAsync(new byte[] { (byte)ControlMethod.TCPTransfer });
+                await nstream.WriteByteAndFlushAsync((byte)ControlMethod.TCPTransfer);
 
                 var nspClient = ServerContext.Clients[clientID];
                 nspClient.LastUpdateTime = DateTime.Now;
@@ -671,14 +679,14 @@ namespace NSmartProxy
                         if (peekedClient != null)
                         {
                             //发送保活数据
-                            await peekedClient.GetStream().WriteAndFlushAsync(new byte[] { (byte)ControlMethod.KeepAlive });
+                            await peekedClient.GetStream().WriteByteAndFlushAsync((byte)ControlMethod.KeepAlive);
                         }
                     }
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     Logger.Debug($"{clientID}保活失败尝试切断连接");
-                    throw ex;
+                    throw;
                 }
 
             }
@@ -707,14 +715,14 @@ namespace NSmartProxy
             if (clientIdFromToken == 0)
             {
                 //TODO 2 服务端错误，校验失败
-                await nstream.WriteAsync(new byte[] { (byte)ServerStatus.AuthFailed });
+                nstream.WriteByte((byte)ServerStatus.AuthFailed);
                 client.Close();
                 return false;
             }
             else if (clientIdFromToken == -1)
             {
                 //用户被禁用
-                await nstream.WriteAsync(new byte[] { (byte)ServerStatus.UserBanned });
+                nstream.WriteByte((byte)ServerStatus.UserBanned);
                 client.Close();
                 return false;
             }
@@ -839,7 +847,7 @@ namespace NSmartProxy
 
         #region datatransfer
         //3端互相传输数据
-        async Task OpenTcpTransmission(Stream consumerStream, Stream providerStream,
+        async Task OpenTcpTransmission(TcpClient consumerClient, TcpClient providerClient, Stream consumerStream, Stream providerStream,
             NSPApp nspApp,
             CancellationToken ct)
         {
@@ -852,6 +860,11 @@ namespace NSmartProxy
 
                 //任何一端传输中断或者故障，则关闭所有连接
                 var comletedTask = await Task.WhenAny(taskC2PLooping, taskP2CLooping);
+                if (comletedTask == taskC2PLooping)
+                {
+                    TryShutdownSend(providerClient);
+                    await taskP2CLooping.ConfigureAwait(false);
+                }
                 Logger.Debug($"Transferring ({nspApp.ClientId}-{nspApp.AppId}) STOPPED");
 
             }
@@ -865,77 +878,88 @@ namespace NSmartProxy
 
         private async Task StreamTransfer(CancellationToken ct, Stream fromStream, Stream toStream, NSPApp nspApp)
         {
-            using (fromStream)
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(Global.ServerTunnelBufferSize);
+            try
             {
-                byte[] buffer = new byte[Global.ServerTunnelBufferSize];
-                try
+                int bytesRead;
+                if (nspApp.IsCompress)
                 {
-                    int bytesRead;
-                    if (nspApp.IsCompress)
+                    while (!ct.IsCancellationRequested)
                     {
-                        while (!ct.IsCancellationRequested)
-                        {
-                            //Array.Resize(array: ref buffer, newSize: bytesRead);//此处存在copy，需要看看snappy是否支持偏移量数组
-                            byte[] bufferCompressed = await fromStream.ReadNextQLengthBytes();
-                            if (bufferCompressed.Length == 0) break;
-                            var compressBuffer = StringUtil.DecompressInSnappy(bufferCompressed,0,bufferCompressed.Length);
-                            bytesRead = compressBuffer.Length;
-                            await toStream.WriteAsync(compressBuffer, 0, bytesRead, ct).ConfigureAwait(false);
-                        }
-                    }
-                    else
-                    {
-                        while ((bytesRead =
-                                   await fromStream.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) != 0)
-                        {
-
-                            await toStream.WriteAsync(buffer, 0, bytesRead, ct).ConfigureAwait(false);
-
-                            ServerContext.TotalSentBytes += bytesRead; //上行
-                        }
+                        using var bufferCompressed = await fromStream.ReadNextQLengthBytesRented();
+                        if (bufferCompressed == null) break;
+                        using var compressBuffer = StringUtil.DecompressInSnappyToRented(bufferCompressed.Buffer, 0, bufferCompressed.Length);
+                        bytesRead = compressBuffer.Length;
+                        await toStream.WriteAsync(compressBuffer.Buffer.AsMemory(0, bytesRead), ct).ConfigureAwait(false);
                     }
                 }
-                catch (Exception ioe)
+                else
                 {
-                    if (ioe is IOException) { return; } //Suppress this exception.
-                    throw;
+                    while ((bytesRead =
+                               await fromStream.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false)) != 0)
+                     {
+                        await toStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct).ConfigureAwait(false);
+                        ServerContext.TotalSentBytes += bytesRead; //上行
+                    }
                 }
+            }
+            catch (Exception ioe)
+            {
+                if (ioe is IOException) { return; } //Suppress this exception.
+                throw;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
             }
         }
 
         private async Task ToStaticTransfer(CancellationToken ct, Stream fromStream, Stream toStream, NSPApp nspApp)
         {
-            using (fromStream)
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(Global.ServerTunnelBufferSize);
+            try
             {
-                byte[] buffer = new byte[Global.ServerTunnelBufferSize];
-                try
-                {
-                    int bytesRead;
-                    while ((bytesRead =
-                               await fromStream.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) != 0)
+                int bytesRead;
+                while ((bytesRead =
+                           await fromStream.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false)) != 0)
+                 {
+                    if (nspApp.IsCompress)
                     {
-                        if (nspApp.IsCompress)
-                        {
-                            //Array.Resize(array: ref buffer, newSize: bytesRead);//此处存在copy，需要看看snappy是否支持偏移量数组
-                            var compressInSnappy = StringUtil.CompressInSnappy(buffer,0,bytesRead);
-                            //var compressedBuffer = compressInSnappy.ContentBytes;
-                           // bytesRead = compressInSnappy.Length;
-                            //TODO 封包传送
-                            if (ct.IsCancellationRequested) { Global.Logger.Info("=传输外部中止="); return; }
-                            await toStream.WriteQLengthBytes(compressInSnappy.ContentBytes, compressInSnappy.Length).ConfigureAwait(false);
-                        }
-                        else
-                        {
-                            await toStream.WriteAsync(buffer, 0, bytesRead, ct).ConfigureAwait(false);
-                        }
-                        ServerContext.TotalReceivedBytes += bytesRead; //下行
+                        using var compressInSnappy = PooledByteBuffer.Rent(StringUtil.GetMaxCompressedLengthInSnappy(bytesRead));
+                        int compressedLength = StringUtil.CompressInSnappy(buffer, 0, bytesRead, compressInSnappy.Buffer);
+                        if (ct.IsCancellationRequested) { Global.Logger.Info("=传输外部中止="); return; }
+                        await toStream.WriteQLengthBytes(compressInSnappy.Buffer, compressedLength).ConfigureAwait(false);
                     }
+                    else
+                    {
+                        await toStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct).ConfigureAwait(false);
+                    }
+                    ServerContext.TotalReceivedBytes += bytesRead; //下行
                 }
-                catch (Exception ioe)
+            }
+            catch (Exception ioe)
+            {
+                if (ioe is IOException) { return; } //Suppress this exception.
+                throw;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+
+        private void TryShutdownSend(TcpClient client)
+        {
+            try
+            {
+                if (client?.Client != null && client.Client.Connected)
                 {
-                    if (ioe is IOException) { return; } //Suppress this exception.
-                    throw;
+                    client.Client.Shutdown(SocketShutdown.Send);
                 }
+            }
+            catch
+            {
+                // Ignore half-close failures; the finally path will close the socket.
             }
         }
 
@@ -962,28 +986,50 @@ namespace NSmartProxy
         #endregion
 
         #region http
-        private async Task<Tuple<string, string>> ReadHostName(Stream consumerStream)
+        private async Task<Tuple<string, byte[]>> ReadHostName(Stream consumerStream)
         {
-            //需要进一步截包 TODO 2 待优化1.内存优化 2.查询优化
-            const int BUFFER_SIZE = 1024 * 1024 * 2;
-            var length = 0;
-            var data = string.Empty;
-            var bytes = new byte[BUFFER_SIZE];
+            const int BufferSize = 16 * 1024;
+            const int MaxHeaderBytes = 64 * 1024;
+            byte[] chunkBuffer = ArrayPool<byte>.Shared.Rent(BufferSize);
+            using var headerStream = new MemoryStream(BufferSize);
 
-            do
-            {//item2:data item1:host
-                length = await consumerStream.ReadAsync(bytes, 0, BUFFER_SIZE);
-                data += Encoding.UTF8.GetString(bytes, 0, length);
-            } while (length > 0 && !data.Contains("\r\n\r\n"));
+            try
+            {
+                while (headerStream.Length < MaxHeaderBytes)
+                {
+                    int length = await consumerStream.ReadAsync(chunkBuffer, 0, chunkBuffer.Length);
+                    if (length == 0)
+                    {
+                        return null;
+                    }
 
-            if (length == 0) return null;
-            Regex reg = new Regex("\r\nhost: (.*?)\r\n");
+                    headerStream.Write(chunkBuffer, 0, length);
+                    byte[] headerBytes = headerStream.GetBuffer();
+                    int headerLength = (int)headerStream.Length;
+                    string current = Encoding.ASCII.GetString(headerBytes, 0, headerLength);
+                    if (!current.Contains("\r\n\r\n"))
+                    {
+                        continue;
+                    }
 
-            return new Tuple<string, string>(
-                reg.Match(data.ToLower()).Groups[1].Value,//需要进一步优化，使用list<byte[]>
-                data
+                    Regex reg = new Regex("\r\nhost: (.*?)\r\n", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+                    string host = reg.Match(current).Groups[1].Value?.ToLowerInvariant();
+                    if (string.IsNullOrEmpty(host))
+                    {
+                        return null;
+                    }
 
-                );
+                    byte[] rawHeaderBytes = new byte[headerLength];
+                    Buffer.BlockCopy(headerBytes, 0, rawHeaderBytes, 0, headerLength);
+                    return new Tuple<string, byte[]>(host, rawHeaderBytes);
+                }
+
+                return null;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(chunkBuffer);
+            }
         }
         #endregion
 

@@ -70,17 +70,18 @@ namespace NSmartProxy.Infrastructure
         /// <returns></returns> 
         public static string DesEncrypt(string strText, string strEncrKey)
         {
-            byte[] byKey = null;
             byte[] IV = { 0x12, 0x34, 0x56, 0x78, 0x90, 0xAB, 0xCD, 0xEF };
-
-            byKey = Encoding.UTF8.GetBytes(strEncrKey.Substring(0, 8));
-            DESCryptoServiceProvider des = new DESCryptoServiceProvider();
+            byte[] byKey = Encoding.UTF8.GetBytes(strEncrKey.Substring(0, 8));
             byte[] inputByteArray = Encoding.UTF8.GetBytes(strText);
-            MemoryStream ms = new MemoryStream();
-            CryptoStream cs = new CryptoStream(ms, des.CreateEncryptor(byKey, IV), CryptoStreamMode.Write);
-            cs.Write(inputByteArray, 0, inputByteArray.Length);
-            cs.FlushFinalBlock();
-            return Convert.ToBase64String(ms.ToArray());
+
+            using (DES des = DES.Create())
+            using (MemoryStream ms = new MemoryStream())
+            using (CryptoStream cs = new CryptoStream(ms, des.CreateEncryptor(byKey, IV), CryptoStreamMode.Write))
+            {
+                cs.Write(inputByteArray, 0, inputByteArray.Length);
+                cs.FlushFinalBlock();
+                return Convert.ToBase64String(ms.ToArray());
+            }
         }
 
         /// <summary> 
@@ -92,19 +93,18 @@ namespace NSmartProxy.Infrastructure
         /// <returns>输出字符串</returns> 
         public static string DesDecrypt(string strText, string sDecrKey)
         {
-            byte[] byKey = null;
             byte[] IV = { 0x12, 0x34, 0x56, 0x78, 0x90, 0xAB, 0xCD, 0xEF };
-            byte[] inputByteArray = new Byte[strText.Length];
+            byte[] byKey = Encoding.UTF8.GetBytes(sDecrKey.Substring(0, 8));
+            byte[] inputByteArray = Convert.FromBase64String(strText);
 
-            byKey = Encoding.UTF8.GetBytes(sDecrKey.Substring(0, 8));
-            DESCryptoServiceProvider des = new DESCryptoServiceProvider();
-            inputByteArray = Convert.FromBase64String(strText);
-            MemoryStream ms = new MemoryStream();
-            CryptoStream cs = new CryptoStream(ms, des.CreateDecryptor(byKey, IV), CryptoStreamMode.Write);
-            cs.Write(inputByteArray, 0, inputByteArray.Length);
-            cs.FlushFinalBlock();
-            Encoding encoding = new UTF8Encoding();
-            return encoding.GetString(ms.ToArray());
+            using (DES des = DES.Create())
+            using (MemoryStream ms = new MemoryStream())
+            using (CryptoStream cs = new CryptoStream(ms, des.CreateDecryptor(byKey, IV), CryptoStreamMode.Write))
+            {
+                cs.Write(inputByteArray, 0, inputByteArray.Length);
+                cs.FlushFinalBlock();
+                return Encoding.UTF8.GetString(ms.ToArray());
+            }
         }
 
         /// <summary> 
@@ -116,32 +116,18 @@ namespace NSmartProxy.Infrastructure
         /// <param name="strEncrKey">key</param> 
         public static void DesEncrypt(string m_InFilePath, string m_OutFilePath, string strEncrKey)
         {
-            byte[] byKey = null;
             byte[] IV = { 0x12, 0x34, 0x56, 0x78, 0x90, 0xAB, 0xCD, 0xEF };
+            byte[] byKey = Encoding.UTF8.GetBytes(strEncrKey.Substring(0, 8));
 
-            byKey = Encoding.UTF8.GetBytes(strEncrKey.Substring(0, 8));
-            FileStream fin = new FileStream(m_InFilePath, FileMode.Open, FileAccess.Read);
-            FileStream fout = new FileStream(m_OutFilePath, FileMode.OpenOrCreate, FileAccess.Write);
-            fout.SetLength(0);
-            //创建变量，以帮助读写。
-            byte[] bin = new byte[100]; //这是中间的加密存储。 
-            long rdlen = 0; //这是写入的字节总数。 
-            long totlen = fin.Length; //这是输入文件的总长度。
-            int len; //这是一次写入的字节数。
-
-            DES des = new DESCryptoServiceProvider();
-            CryptoStream encStream = new CryptoStream(fout, des.CreateEncryptor(byKey, IV), CryptoStreamMode.Write);
-
-            //读取输入文件，然后加密并写入到输出文件。 
-            while (rdlen < totlen)
+            using (DES des = DES.Create())
+            using (FileStream fin = new FileStream(m_InFilePath, FileMode.Open, FileAccess.Read))
+            using (FileStream fout = new FileStream(m_OutFilePath, FileMode.OpenOrCreate, FileAccess.Write))
+            using (CryptoStream encStream = new CryptoStream(fout, des.CreateEncryptor(byKey, IV), CryptoStreamMode.Write))
             {
-                len = fin.Read(bin, 0, 100);
-                encStream.Write(bin, 0, len);
-                rdlen = rdlen + len;
+                fout.SetLength(0);
+                fin.CopyTo(encStream);
+                encStream.FlushFinalBlock();
             }
-            encStream.Close();
-            fout.Close();
-            fin.Close();
         }
 
         /// <summary> 
@@ -153,32 +139,18 @@ namespace NSmartProxy.Infrastructure
         /// <param name="sDecrKey">key</param> 
         public static void DesDecrypt(string m_InFilePath, string m_OutFilePath, string sDecrKey)
         {
-            byte[] byKey = null;
             byte[] IV = { 0x12, 0x34, 0x56, 0x78, 0x90, 0xAB, 0xCD, 0xEF };
+            byte[] byKey = Encoding.UTF8.GetBytes(sDecrKey.Substring(0, 8));
 
-            byKey = Encoding.UTF8.GetBytes(sDecrKey.Substring(0, 8));
-            FileStream fin = new FileStream(m_InFilePath, FileMode.Open, FileAccess.Read);
-            FileStream fout = new FileStream(m_OutFilePath, FileMode.OpenOrCreate, FileAccess.Write);
-            fout.SetLength(0);
-            //创建变量，以帮助读写。 
-            byte[] bin = new byte[100]; //这是中间的加密存储。 
-            long rdlen = 0; //这是写入的字节总数。
-            long totlen = fin.Length; //这是输入文件的总长度。
-            int len; //这是一次写入的字节数。
-
-            DES des = new DESCryptoServiceProvider();
-            CryptoStream encStream = new CryptoStream(fout, des.CreateDecryptor(byKey, IV), CryptoStreamMode.Write);
-
-            //读取输入文件，然后加密并写入到输出文件。
-            while (rdlen < totlen)
+            using (DES des = DES.Create())
+            using (FileStream fin = new FileStream(m_InFilePath, FileMode.Open, FileAccess.Read))
+            using (FileStream fout = new FileStream(m_OutFilePath, FileMode.OpenOrCreate, FileAccess.Write))
+            using (CryptoStream encStream = new CryptoStream(fout, des.CreateDecryptor(byKey, IV), CryptoStreamMode.Write))
             {
-                len = fin.Read(bin, 0, 100);
-                encStream.Write(bin, 0, len);
-                rdlen = rdlen + len;
+                fout.SetLength(0);
+                fin.CopyTo(encStream);
+                encStream.FlushFinalBlock();
             }
-            encStream.Close();
-            fout.Close();
-            fin.Close();
         }
         #endregion
 
@@ -208,15 +180,17 @@ namespace NSmartProxy.Infrastructure
             encryptKey = GetSubString(encryptKey, 32, "");
             encryptKey = encryptKey.PadRight(32, ' ');
 
-            RijndaelManaged rijndaelProvider = new RijndaelManaged();
-            rijndaelProvider.Key = Encoding.UTF8.GetBytes(encryptKey.Substring(0, 32));
-            rijndaelProvider.IV = Keys;
-            ICryptoTransform rijndaelEncrypt = rijndaelProvider.CreateEncryptor();
+            using (Aes aes = Aes.Create())
+            {
+                aes.Key = Encoding.UTF8.GetBytes(encryptKey.Substring(0, 32));
+                aes.IV = Keys;
+                ICryptoTransform rijndaelEncrypt = aes.CreateEncryptor();
 
-            byte[] inputData = Encoding.UTF8.GetBytes(encryptString);
-            byte[] encryptedData = rijndaelEncrypt.TransformFinalBlock(inputData, 0, inputData.Length);
+                byte[] inputData = Encoding.UTF8.GetBytes(encryptString);
+                byte[] encryptedData = rijndaelEncrypt.TransformFinalBlock(inputData, 0, inputData.Length);
 
-            return Convert.ToBase64String(encryptedData);
+                return Convert.ToBase64String(encryptedData);
+            }
         }
 
         /// <summary>
@@ -242,15 +216,17 @@ namespace NSmartProxy.Infrastructure
                 decryptKey = GetSubString(decryptKey, 32, "");
                 decryptKey = decryptKey.PadRight(32, ' ');
 
-                RijndaelManaged rijndaelProvider = new RijndaelManaged();
-                rijndaelProvider.Key = Encoding.UTF8.GetBytes(decryptKey);
-                rijndaelProvider.IV = Keys;
-                ICryptoTransform rijndaelDecrypt = rijndaelProvider.CreateDecryptor();
+                using (Aes aes = Aes.Create())
+                {
+                    aes.Key = Encoding.UTF8.GetBytes(decryptKey);
+                    aes.IV = Keys;
+                    ICryptoTransform rijndaelDecrypt = aes.CreateDecryptor();
 
-                byte[] inputData = Convert.FromBase64String(decryptString);
-                byte[] decryptedData = rijndaelDecrypt.TransformFinalBlock(inputData, 0, inputData.Length);
+                    byte[] inputData = Convert.FromBase64String(decryptString);
+                    byte[] decryptedData = rijndaelDecrypt.TransformFinalBlock(inputData, 0, inputData.Length);
 
-                return Encoding.UTF8.GetString(decryptedData);
+                    return Encoding.UTF8.GetString(decryptedData);
+                }
             }
             catch
             {
@@ -368,13 +344,12 @@ namespace NSmartProxy.Infrastructure
             decryptKey = GetSubString(decryptKey, 32, "");
             decryptKey = decryptKey.PadRight(32, ' ');
 
-            RijndaelManaged rijndaelProvider = new RijndaelManaged();
-            rijndaelProvider.Key = Encoding.UTF8.GetBytes(decryptKey);
-            rijndaelProvider.IV = Keys;
+            Aes aes = Aes.Create();
+            aes.Key = Encoding.UTF8.GetBytes(decryptKey);
+            aes.IV = Keys;
 
-            ICryptoTransform encrypto = rijndaelProvider.CreateEncryptor();
-            CryptoStream cytptostreamEncr = new CryptoStream(fs, encrypto, CryptoStreamMode.Write);
-            return cytptostreamEncr;
+            ICryptoTransform encrypto = aes.CreateEncryptor();
+            return new CryptoStream(fs, encrypto, CryptoStreamMode.Write);
         }
 
         /// <summary>
@@ -387,12 +362,11 @@ namespace NSmartProxy.Infrastructure
             decryptKey = GetSubString(decryptKey, 32, "");
             decryptKey = decryptKey.PadRight(32, ' ');
 
-            RijndaelManaged rijndaelProvider = new RijndaelManaged();
-            rijndaelProvider.Key = Encoding.UTF8.GetBytes(decryptKey);
-            rijndaelProvider.IV = Keys;
-            ICryptoTransform Decrypto = rijndaelProvider.CreateDecryptor();
-            CryptoStream cytptostreamDecr = new CryptoStream(fs, Decrypto, CryptoStreamMode.Read);
-            return cytptostreamDecr;
+            Aes aes = Aes.Create();
+            aes.Key = Encoding.UTF8.GetBytes(decryptKey);
+            aes.IV = Keys;
+            ICryptoTransform Decrypto = aes.CreateDecryptor();
+            return new CryptoStream(fs, Decrypto, CryptoStreamMode.Read);
         }
 
         /// <summary>
@@ -407,15 +381,13 @@ namespace NSmartProxy.Infrastructure
             {
                 string decryptKey = "www.iqidi.com";
 
-                FileStream fr = new FileStream(InputFile, FileMode.Open);
-                FileStream fren = new FileStream(OutputFile, FileMode.Create);
-                CryptoStream Enfr = AES_EncryptStrream(fren, decryptKey);
-                byte[] bytearrayinput = new byte[fr.Length];
-                fr.Read(bytearrayinput, 0, bytearrayinput.Length);
-                Enfr.Write(bytearrayinput, 0, bytearrayinput.Length);
-                Enfr.Close();
-                fr.Close();
-                fren.Close();
+                using (FileStream fr = new FileStream(InputFile, FileMode.Open))
+                using (FileStream fren = new FileStream(OutputFile, FileMode.Create))
+                using (CryptoStream Enfr = AES_EncryptStrream(fren, decryptKey))
+                {
+                    fr.CopyTo(Enfr);
+                    Enfr.FlushFinalBlock();
+                }
             }
             catch
             {
@@ -436,23 +408,12 @@ namespace NSmartProxy.Infrastructure
             try
             {
                 string decryptKey = "www.iqidi.com";
-                FileStream fr = new FileStream(InputFile, FileMode.Open);
-                FileStream frde = new FileStream(OutputFile, FileMode.Create);
-                CryptoStream Defr = AES_DecryptStream(fr, decryptKey);
-                byte[] bytearrayoutput = new byte[1024];
-                int m_count = 0;
-
-                do
+                using (FileStream fr = new FileStream(InputFile, FileMode.Open))
+                using (FileStream frde = new FileStream(OutputFile, FileMode.Create))
+                using (CryptoStream Defr = AES_DecryptStream(fr, decryptKey))
                 {
-                    m_count = Defr.Read(bytearrayoutput, 0, bytearrayoutput.Length);
-                    frde.Write(bytearrayoutput, 0, m_count);
-                    if (m_count < bytearrayoutput.Length)
-                        break;
-                } while (true);
-
-                Defr.Close();
-                fr.Close();
-                frde.Close();
+                    Defr.CopyTo(frde);
+                }
             }
             catch
             {
@@ -500,39 +461,37 @@ namespace NSmartProxy.Infrastructure
         /// <returns>md5 Encrypt string</returns> 
         public static string MD5Encrypt(string strText)
         {
-            MD5 md5 = new MD5CryptoServiceProvider();
-            byte[] result = md5.ComputeHash(Encoding.Default.GetBytes(strText));
-            return Encoding.Default.GetString(result);
+            using (MD5 md5 = MD5.Create())
+            {
+                byte[] result = md5.ComputeHash(Encoding.Default.GetBytes(strText));
+                return Encoding.Default.GetString(result);
+            }
         }
 
         public static string MD5EncryptHash(String input)
         {
-            MD5 md5 = new MD5CryptoServiceProvider();
-            //the GetBytes method returns byte array equavalent of a string
-            byte[] res = md5.ComputeHash(Encoding.Default.GetBytes(input), 0, input.Length);
-            char[] temp = new char[res.Length];
-            //copy to a char array which can be passed to a String constructor
-            Array.Copy(res, temp, res.Length);
-            //return the result as a string
-            return new String(temp);
+            using (MD5 md5 = MD5.Create())
+            {
+                byte[] res = md5.ComputeHash(Encoding.Default.GetBytes(input), 0, input.Length);
+                char[] temp = new char[res.Length];
+                Array.Copy(res, temp, res.Length);
+                return new String(temp);
+            }
         }
 
         public static string MD5EncryptHashHex(String input)
         {
-            MD5 md5 = new MD5CryptoServiceProvider();
-            //the GetBytes method returns byte array equavalent of a string
-            byte[] res = md5.ComputeHash(Encoding.Default.GetBytes(input), 0, input.Length);
-
-            String returnThis = string.Empty;
-
-            for (int i = 0; i < res.Length; i++)
+            using (MD5 md5 = MD5.Create())
             {
-                returnThis += Uri.HexEscape((char)res[i]);
-            }
-            returnThis = returnThis.Replace("%", "");
-            returnThis = returnThis.ToLower();
+                byte[] res = md5.ComputeHash(Encoding.Default.GetBytes(input), 0, input.Length);
+                StringBuilder builder = new StringBuilder(res.Length * 2);
+                for (int i = 0; i < res.Length; i++)
+                {
+                    builder.Append(Uri.HexEscape((char)res[i]).Replace("%", "").ToLowerInvariant());
+                }
 
-            return returnThis;
+                return builder.ToString();
+            }
         }
 
         /// <summary>
@@ -545,18 +504,20 @@ namespace NSmartProxy.Infrastructure
         /// <returns></returns>
         public static string EncyptMD5_3_16(string s)
         {
-            MD5 md5 = MD5CryptoServiceProvider.Create();
-            byte[] bytes = System.Text.Encoding.ASCII.GetBytes(s);
-            byte[] bytes1 = md5.ComputeHash(bytes);
-            byte[] bytes2 = md5.ComputeHash(bytes1);
-            byte[] bytes3 = md5.ComputeHash(bytes2);
-
-            StringBuilder sb = new StringBuilder();
-            foreach (var item in bytes3)
+            using (MD5 md5 = MD5.Create())
             {
-                sb.Append(item.ToString("x").PadLeft(2, '0'));
+                byte[] bytes = Encoding.ASCII.GetBytes(s);
+                byte[] bytes1 = md5.ComputeHash(bytes);
+                byte[] bytes2 = md5.ComputeHash(bytes1);
+                byte[] bytes3 = md5.ComputeHash(bytes2);
+
+                StringBuilder sb = new StringBuilder();
+                foreach (var item in bytes3)
+                {
+                    sb.Append(item.ToString("x").PadLeft(2, '0'));
+                }
+                return sb.ToString().ToUpper();
             }
-            return sb.ToString().ToUpper();
         }
         #endregion
 
@@ -568,9 +529,11 @@ namespace NSmartProxy.Infrastructure
         public static string SHA256(string str)
         {
             byte[] SHA256Data = Encoding.UTF8.GetBytes(str);
-            SHA256Managed Sha256 = new SHA256Managed();
-            byte[] Result = Sha256.ComputeHash(SHA256Data);
-            return Convert.ToBase64String(Result);  //返回长度为44字节的字符串
+            using (SHA256 Sha256 = System.Security.Cryptography.SHA256.Create())
+            {
+                byte[] Result = Sha256.ComputeHash(SHA256Data);
+                return Convert.ToBase64String(Result);  //返回长度为44字节的字符串
+            }
         }
 
     }

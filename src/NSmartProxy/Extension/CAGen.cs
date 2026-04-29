@@ -52,8 +52,10 @@ namespace NSmartProxy.Extension
                 //certificate.FriendlyName = CertificateName;
                 //return certificate;
 
-                return new X509Certificate2(certificate.Export(X509ContentType.Pfx, "WeNeedASaf3rPassword"),
-                    "WeNeedASaf3rPassword", X509KeyStorageFlags.Exportable);
+                return X509CertificateLoader.LoadPkcs12(
+                    certificate.Export(X509ContentType.Pfx, "WeNeedASaf3rPassword"),
+                    "WeNeedASaf3rPassword",
+                    X509KeyStorageFlags.Exportable);
 
             }
         }

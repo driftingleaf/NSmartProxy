@@ -125,7 +125,7 @@ namespace Snappy.Sharp
                 readCount = ProcessRemainingInternalBuffer(buffer, offset, count);
                 if (readCount != count)
                 {
-                    stream.Read(internalBuffer, 0, length);
+                    ReadExactly(stream, internalBuffer, 0, length);
                     Array.Copy(internalBuffer, 0, buffer, offset, count - readCount);
                     internalBufferIndex = count - readCount;
                     internalBufferLength = length;
@@ -138,7 +138,7 @@ namespace Snappy.Sharp
 
                 // we at most have 64kb in the buffer to read
                 byte[] tempBuffer = new byte[1 << (BLOCK_LOG + 1)];
-                stream.Read(tempBuffer, 0, tempBuffer.Length);
+                ReadExactly(stream, tempBuffer, 0, tempBuffer.Length);
 
                 decompressor.Decompress(tempBuffer, 0, tempBuffer.Length, internalBuffer, 0, length);
 
@@ -290,11 +290,26 @@ namespace Snappy.Sharp
         private void CheckStreamHeader()
         {
             byte[] heading = new byte[StreamHeader.Length];
-            stream.Read(heading, 0, heading.Length);
+            ReadExactly(stream, heading, 0, heading.Length);
             for (int i = 1; i < heading.Length; i++)
             {
                 if (heading[i] != StreamHeader[i])
                     throw new InvalidDataException("Stream does not start with required header");
+            }
+        }
+
+        private static void ReadExactly(Stream stream, byte[] buffer, int offset, int count)
+        {
+            while (count > 0)
+            {
+                int read = stream.Read(buffer, offset, count);
+                if (read == 0)
+                {
+                    throw new EndOfStreamException("Unexpected end of snappy stream.");
+                }
+
+                offset += read;
+                count -= read;
             }
         }
 

@@ -38,7 +38,7 @@ namespace NSmartProxy.Database
                 int keyLen = br.ReadInt32();
                 if (keyLen == k.Length)
                 {
-                    rf.Read(key);
+                    ReadExactly(key);
                     int valueLen = br.ReadInt32();//判断该位置是否有值
                     if (Enumerable.SequenceEqual(key, k))
                     {
@@ -98,12 +98,12 @@ namespace NSmartProxy.Database
                 int keyLen = br.ReadInt32();
                 if (keyLen == k.Length)
                 {
-                    br.Read(key);
+                    ReadExactly(key);
                     int valueLen = br.ReadInt32();
                     if (Enumerable.SequenceEqual(key, k))
                     {
                         byte[] v = new byte[valueLen];
-                        br.Read(v);
+                        ReadExactly(v);
                         return v;
                     }
                     else
@@ -134,7 +134,7 @@ namespace NSmartProxy.Database
                 int keyLen = br.ReadInt32();
                 if (keyLen == k.Length)
                 {
-                    br.Read(key);
+                    ReadExactly(key);
                     int valueLen = br.ReadInt32();
                     if (Enumerable.SequenceEqual(key, k))
                     {
@@ -168,7 +168,7 @@ namespace NSmartProxy.Database
                 int keyLen = br.ReadInt32();
                 if (keyLen == k.Length)
                 {
-                    br.Read(key);
+                    ReadExactly(key);
                     int valueLen = br.ReadInt32();
                     if (Enumerable.SequenceEqual(key, k))
                     {
@@ -241,6 +241,21 @@ namespace NSmartProxy.Database
             //}
 
             //return ulValue;
+        }
+
+        private void ReadExactly(byte[] buffer)
+        {
+            int offset = 0;
+            while (offset < buffer.Length)
+            {
+                int read = rf.Read(buffer, offset, buffer.Length - offset);
+                if (read == 0)
+                {
+                    throw new EndOfStreamException("读取 HashFile 数据时提前结束。");
+                }
+
+                offset += read;
+            }
         }
     }
 

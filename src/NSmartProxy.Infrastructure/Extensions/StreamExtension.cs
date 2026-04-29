@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Buffers;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
@@ -16,8 +17,19 @@ namespace NSmartProxy.Infrastructure
         {
             //不让赋值默认值，只能暂时给个0
             if (count == 0) count = buffer.Length;
-            await stream.WriteAsync(buffer, offset, count);
+            await stream.WriteAndFlushAsync(buffer.AsMemory(offset, count));
+        }
+
+        public static async Task WriteAndFlushAsync(this Stream stream, ReadOnlyMemory<byte> buffer)
+        {
+            await stream.WriteAsync(buffer);
             await stream.FlushAsync();
+        }
+
+        public static Task WriteByteAndFlushAsync(this Stream stream, byte value)
+        {
+            stream.WriteByte(value);
+            return stream.FlushAsync();
         }
 
 
@@ -32,11 +44,14 @@ namespace NSmartProxy.Infrastructure
         /// <returns></returns>
         public static async Task<UdpReceiveResult?> ReceiveAsync(this UdpClient client, int timeOut)
         {
-            UdpReceiveResult? udpReceiveResult = null;
-            var receiveTask = Task.Run(async () => { udpReceiveResult = await client.ReceiveAsync(); });
-            var isReceived = await Task.WhenAny(receiveTask, Task.Delay(timeOut)) == receiveTask;
-            if (!isReceived) return null;
-            return udpReceiveResult;
+            try
+            {
+                return await client.ReceiveAsync().WaitAsync(TimeSpan.FromMilliseconds(timeOut));
+            }
+            catch (TimeoutException)
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -50,11 +65,19 @@ namespace NSmartProxy.Infrastructure
         /// <returns></returns>
         public static async Task<int> ReadAsync(this Stream stream, byte[] buffer, int offset, int count, int timeOut)
         {
-            var receiveCount = 0;
-            var receiveTask = Task.Run(async () => { receiveCount = await stream.ReadAsync(buffer, offset, count); });
-            var isReceived = await Task.WhenAny(receiveTask, Task.Delay(timeOut)) == receiveTask;
-            if (!isReceived) return -1;
-            return receiveCount;
+            return await stream.ReadAsync(buffer.AsMemory(offset, count), timeOut);
+        }
+
+        public static async Task<int> ReadAsync(this Stream stream, Memory<byte> buffer, int timeOut)
+        {
+            try
+            {
+                return await stream.ReadAsync(buffer).AsTask().WaitAsync(TimeSpan.FromMilliseconds(timeOut));
+            }
+            catch (TimeoutException)
+            {
+                return -1;
+            }
         }
 
         /// <summary>
@@ -63,26 +86,61 @@ namespace NSmartProxy.Infrastructure
         /// </summary>
         public static async Task<int> ReadNextSTLengthBytes(this Stream stream, byte[] buffer)
         {
-            int restBufferLength = buffer.Length;
+            return await stream.ReadNextSTLengthBytes(buffer.AsMemory());
+        }
+
+        public static async Task<int> ReadNextSTLengthBytes(this Stream stream, Memory<byte> buffer)
+        {
             int totalReceivedBytes = 0;
-            while (restBufferLength > 0)
+            while (totalReceivedBytes < buffer.Length)
             {
-                int receivedBytes = await stream.ReadAsyncEx(buffer, totalReceivedBytes, restBufferLength);
+                int receivedBytes = await stream.ReadAsyncEx(buffer[totalReceivedBytes..]);
                 if (receivedBytes <= 0) return -1;//没有接收满则断开返回-1
                 totalReceivedBytes += receivedBytes;
-                restBufferLength -= receivedBytes;
             }
             return totalReceivedBytes;
         }
 
+        public static async Task<bool> TryReadExactlyAsync(this Stream stream, byte[] buffer, int offset, int count)
+        {
+            return await stream.TryReadExactlyAsync(buffer.AsMemory(offset, count));
+        }
+
+        public static async Task<bool> TryReadExactlyAsync(this Stream stream, Memory<byte> buffer)
+        {
+            int totalRead = 0;
+            while (totalRead < buffer.Length)
+            {
+                int read = await stream.ReadAsyncEx(buffer[totalRead..]);
+                if (read <= 0)
+                {
+                    return false;
+                }
+
+                totalRead += read;
+            }
+
+            return true;
+        }
+
+        public static Task<bool> TryReadExactlyAsync(this Stream stream, byte[] buffer)
+        {
+            return stream.TryReadExactlyAsync(buffer.AsMemory());
+        }
+
         public static async Task<int> ReadAsyncEx(this Stream stream, byte[] buffer, int offset, int count)
         {
-            return await stream.ReadAsync(buffer, offset, count, Global.DefaultConnectTimeout);
+            return await stream.ReadAsync(buffer.AsMemory(offset, count), Global.DefaultConnectTimeout);
+        }
+
+        public static async Task<int> ReadAsyncEx(this Stream stream, Memory<byte> buffer)
+        {
+            return await stream.ReadAsync(buffer, Global.DefaultConnectTimeout);
         }
 
         public static async Task<int> ReadAsyncEx(this Stream stream, byte[] buffer)
         {
-            return await stream.ReadAsyncEx(buffer, 0, buffer.Length);
+            return await stream.ReadAsyncEx(buffer.AsMemory());
         }
 
         public static Stream ProcessSSL(this Stream clientStream, X509Certificate cert)
@@ -95,10 +153,10 @@ namespace NSmartProxy.Infrastructure
                 sslStream.WriteTimeout = 10000;
                 return sslStream;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 clientStream.Close();
-                throw ex;
+                throw;
             }
 
             //return null;
@@ -106,7 +164,7 @@ namespace NSmartProxy.Infrastructure
 
         public static async Task WriteAsync(this Stream stream, byte[] bytes)
         {
-            await stream.WriteAsync(bytes, 0, bytes.Length);
+            await stream.WriteAsync(bytes.AsMemory());
         }
 
         /// <summary>
@@ -118,8 +176,10 @@ namespace NSmartProxy.Infrastructure
         public static async Task WriteDLengthBytes(this Stream stream, string asciiStr)
         {
             byte[] bytes = Encoding.ASCII.GetBytes(asciiStr);
-            stream.Write(StringUtil.IntTo2Bytes(bytes.Length), 0, 2);
-            await stream.WriteAsync(bytes);
+            Span<byte> header = stackalloc byte[2];
+            StringUtil.WriteIntTo2Bytes(header, bytes.Length);
+            stream.Write(header);
+            await stream.WriteAsync(bytes.AsMemory());
         }
         /// <summary>
         /// 写入动态长度的字节，头两字节存放长度
@@ -129,8 +189,10 @@ namespace NSmartProxy.Infrastructure
         /// <returns></returns>
         public static async Task WriteDLengthBytes(this Stream stream, byte[] bytes)
         {
-            stream.Write(StringUtil.IntTo2Bytes(bytes.Length), 0, 2);
-            await stream.WriteAsync(bytes);
+            Span<byte> header = stackalloc byte[2];
+            StringUtil.WriteIntTo2Bytes(header, bytes.Length);
+            stream.Write(header);
+            await stream.WriteAsync(bytes.AsMemory());
         }
 
         /// <summary>
@@ -141,15 +203,18 @@ namespace NSmartProxy.Infrastructure
         /// <returns></returns>
         public static async Task WriteQLengthBytes(this Stream stream, byte[] bytes,int forceLength = -1)
         {
+            Span<byte> header = stackalloc byte[4];
             if (forceLength > 0)
             {
-                stream.Write(StringUtil.IntTo4Bytes(forceLength), 0, 4);
-                await stream.WriteAsync(bytes,0,forceLength);
+                StringUtil.WriteIntTo4Bytes(header, forceLength);
+                stream.Write(header);
+                await stream.WriteAsync(bytes.AsMemory(0, forceLength));
             }
             else
             {
-                stream.Write(StringUtil.IntTo4Bytes(bytes.Length), 0, 4);
-                await stream.WriteAsync(bytes);
+                StringUtil.WriteIntTo4Bytes(header, bytes.Length);
+                stream.Write(header);
+                await stream.WriteAsync(bytes.AsMemory());
             }
             
         }
@@ -162,18 +227,22 @@ namespace NSmartProxy.Infrastructure
         /// <returns></returns>
         public static async Task<byte[]> ReadNextDLengthBytes(this Stream stream)
         {
-            // int readInt = 0; 
-            byte[] bt2 = new byte[2];
-            //readInt += bt2.Length;
-            var readByte = await stream.ReadAsync(bt2, 0, 2);
-            byte[] bytes = null;
-            if (readByte > 0)
+            byte[] bt2 = ArrayPool<byte>.Shared.Rent(2);
+            try
             {
-                int length = BitConverter.ToInt16(bt2, 0);
-                bytes = new byte[length];
-                await stream.ReadAsync(bytes, 0, length);
+                if (!await stream.TryReadExactlyAsync(bt2.AsMemory(0, 2)))
+                {
+                    return null;
+                }
+
+                int length = StringUtil.DoubleBytesToInt(bt2.AsSpan(0, 2));
+                var bytes = new byte[length];
+                return await stream.TryReadExactlyAsync(bytes.AsMemory()) ? bytes : null;
             }
-            return bytes;
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(bt2);
+            }
         }
 
         /// <summary>
@@ -185,34 +254,53 @@ namespace NSmartProxy.Infrastructure
         /// <returns></returns>
         public static async Task<byte[]> ReadNextQLengthBytes(this Stream stream)
         {
-            byte[] bt2 = new byte[4];
-            var readByte = await stream.ReadAsync(bt2, 0, 4);
-            byte[] bytes = null;
-            if (readByte > 0)
+            byte[] bt2 = ArrayPool<byte>.Shared.Rent(4);
+            try
             {
-                int length = BitConverter.ToInt32(bt2, 0);
-                bytes = new byte[length];
-                int readedByteCount = await stream.ReadAsync(bytes, 0, length);
-                if (readedByteCount == 0)
+                if (!await stream.TryReadExactlyAsync(bt2.AsMemory(0, 4)))
                 {
-                    return new byte[0];
+                    return Array.Empty<byte>();
                 }
-                int restLength = length - readedByteCount;
-                while (restLength > 0)
-                {
-                    readedByteCount += await stream.ReadAsync(bytes, readedByteCount, restLength);
-                    if (readedByteCount == 0)
-                    {
-                        return new byte[0];
-                    }
-                    restLength = length - readedByteCount;
-                }
+
+                int length = StringUtil.ReadInt32(bt2.AsSpan(0, 4));
+                var bytes = new byte[length];
+                return await stream.TryReadExactlyAsync(bytes.AsMemory()) ? bytes : Array.Empty<byte>();
             }
-            else
+            finally
             {
-                return new byte[0];
+                ArrayPool<byte>.Shared.Return(bt2);
             }
-            return bytes;
+        }
+
+        public static async Task<PooledByteBuffer> ReadNextQLengthBytesRented(this Stream stream)
+        {
+            byte[] bt2 = ArrayPool<byte>.Shared.Rent(4);
+            try
+            {
+                if (!await stream.TryReadExactlyAsync(bt2.AsMemory(0, 4)))
+                {
+                    return null;
+                }
+
+                int length = StringUtil.ReadInt32(bt2.AsSpan(0, 4));
+                if (length <= 0)
+                {
+                    return null;
+                }
+
+                byte[] bytes = ArrayPool<byte>.Shared.Rent(length);
+                if (await stream.TryReadExactlyAsync(bytes.AsMemory(0, length)))
+                {
+                    return new PooledByteBuffer(bytes, length);
+                }
+
+                ArrayPool<byte>.Shared.Return(bytes);
+                return null;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(bt2);
+            }
         }
 
     }

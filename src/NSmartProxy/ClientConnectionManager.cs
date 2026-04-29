@@ -86,18 +86,18 @@ namespace NSmartProxy
                 if (!result.IsSuccess)
                 {
                     Server.Logger.Debug("SecurityTcpClient校验失败：" + incomeClient.ErrorMessage);
-                    await iClient.GetStream().WriteAsync(new byte[] { (byte)result.ResultState });
+                    await iClient.GetStream().WriteByteAndFlushAsync((byte)result.ResultState);
                     iClient.Close();//如果校验失败则发送一个字节的直接关闭连接
                 }
                 else
                 {
                     Server.Logger.Debug("SecurityTcpClient校验成功！");
-                    await iClient.GetStream().WriteAsync(new byte[] { (byte)result.ResultState });
+                    await iClient.GetStream().WriteByteAndFlushAsync((byte)result.ResultState);
                 }
 
                 //读取头四个字节
                 byte[] bytes = new byte[4];
-                if (await iClient.GetStream().ReadAsync(bytes, 0, bytes.Length, Global.DefaultConnectTimeout) < 1)
+                if (await iClient.GetStream().ReadNextSTLengthBytes(bytes) < 1)
                 {
                     Server.Logger.Debug("服务端read出错，关闭连接");
                     incomeClient.Client.Close();

@@ -473,7 +473,7 @@ window.location.href='main.html';
                     // nspClientConfig.ConfigPort = ServerContext.ServerConfig.ConfigPort;
                     // nspClientConfig.ReversePort = ServerContext.ServerConfig.ReversePort;
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     throw new Exception("配置格式不正确。");
                 }
@@ -843,7 +843,7 @@ window.location.href='main.html';
             filename = Path.GetFileName(filename);//安全起见取一下文件名
             string destPath = baseCAPath + "/" + filename;
             File.Move("./temp/" + filename, destPath);
-            ServerContext.PortCertMap[portInt.ToString()] = X509Certificate2.CreateFromCertFile(destPath);
+            ServerContext.PortCertMap[portInt.ToString()] = X509CertificateLoader.LoadCertificateFromFile(destPath);
             // ServerContext.PortCertMap[port] = new X509Certificate2,
             //     "WeNeedASaf3rPassword", X509KeyStorageFlags.MachineKeySet);
             ServerContext.ServerConfig.CABoundConfig[portInt.ToString()] = destPath;

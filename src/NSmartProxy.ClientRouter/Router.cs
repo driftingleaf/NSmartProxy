@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using NSmartProxy.Shared;
 using System.IO;
 using System.Reflection;
+using System.Buffers;
 using NSmartProxy.Client.Authorize;
 using NSmartProxy.ClientRouter.Dispatchers;
 using NSmartProxy.Data.Models;
@@ -424,7 +425,7 @@ namespace NSmartProxy.Client
                     try
                     {
 
-                        int readByteCount = await providerClientStream.ReadAsync(buffer, 0, buffer.Length); //双端标记S0001
+                        int readByteCount = await providerClientStream.ReadAsync(buffer.AsMemory()); //双端标记S0001
                         if (readByteCount == 0)
                         {
                             //抛出错误以便上层重启客户端。
@@ -451,12 +452,12 @@ namespace NSmartProxy.Client
                             await OpenUdpTransmission(appId, providerClient);
                             continue;//udp 发送后继续循环，方法里的ConnectAppToServer会再拉起一个新连接
                         case ControlMethod.TCPTransfer:
-                            var tranferTokenId = BitConverter.ToInt32(buffer.Skip(1).Take(4).ToArray(), 0);
+                            var tranferTokenId = StringUtil.ReadInt32(buffer.AsSpan(1, 4));
                             await OpenTcpTransmission(appId, providerClient, toTargetServer, tranferTokenId);
                             return;//tcp 开启隧道，并且不再利用此连接
                         case ControlMethod.ForceClose:
                             Logger.Info("客户端在别处被抢登，当前被强制下线。");
-                            Close();
+                            await Close();
                             return;
                         default: throw new Exception("非法请求:" + buffer[0]);
                     }
@@ -503,7 +504,10 @@ namespace NSmartProxy.Client
             byte[] portByte = new byte[2];
             byte[] bytesData = null;
             ipByte = await networkStream.ReadNextDLengthBytes();
-            await networkStream.ReadAsync(portByte, 0, 2);
+            if (await networkStream.ReadNextSTLengthBytes(portByte) != portByte.Length)
+            {
+                throw new IOException("读取 UDP 端口失败。");
+            }
             bytesData = await networkStream.ReadNextDLengthBytes();
             Router.Logger.Debug($"{appId} 发送 {bytesData.Length} 字节");
             Dictionary<string, UdpClient> udpDict = ConnectionManager.ConnectedUdpClients;
@@ -582,7 +586,7 @@ namespace NSmartProxy.Client
             // item1:app编号，item2:ip地址，item3:目标服务端口
             try
             {
-                toTargetServer.Connect(item.IP, item.TargetServicePort);
+                await toTargetServer.ConnectAsync(item.IP, item.TargetServicePort).ConfigureAwait(false);
             }
             catch
             {
@@ -624,13 +628,22 @@ namespace NSmartProxy.Client
             NetworkStream providerStream = providerClient.GetStream();
             try
             {
+                providerClient.NoDelay = true;
+                toTargetServer.NoDelay = true;
                 string localEndPoint = providerClient.Client.LocalEndPoint.ToString();
                 Router.Logger.Debug("Looping start.(" + localEndPoint + ")");
                 //创建相互转发流
                 var taskT2PLooping = ToStaticTransfer(TRANSFERING_TOKEN_SRC.Token, targetServerStream, providerStream, epString, item);
                 var taskP2TLooping = StreamTransfer(TRANSFERING_TOKEN_SRC.Token, providerStream, targetServerStream, epString, item);
-                //close connnection,whether client or server stopped transferring.
                 var completedTask = await Task.WhenAny(taskT2PLooping, taskP2TLooping);
+
+                // 请求方向先结束时，向本地服务发送半关闭，让响应仍可继续返回。
+                if (completedTask == taskP2TLooping)
+                {
+                    TryShutdownSend(toTargetServer);
+                    await taskT2PLooping.ConfigureAwait(false);
+                }
+
                 providerClient.Close();
                 Router.Logger.Debug("已关闭toProvider(" + localEndPoint + ")连接。");
                 toTargetServer.Close();
@@ -649,30 +662,33 @@ namespace NSmartProxy.Client
         private async Task StreamTransfer(CancellationToken ct, NetworkStream fromStream, NetworkStream toStream,
             string epString, ClientApp item)
         {
-            byte[] buffer = new byte[Global.ClientTunnelBufferSize];
-            using (fromStream)
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(Global.ClientTunnelBufferSize);
+            try
             {
                 int bytesRead;
                 if (item.IsCompress)
                 {
                     while (!ct.IsCancellationRequested)
                     {
-                        //Array.Resize(array: ref buffer, newSize: bytesRead);//此处存在copy，需要看看snappy是否支持偏移量数组
-                        byte[] bufferCompressed = await fromStream.ReadNextQLengthBytes();
-                        if (bufferCompressed.Length == 0) break;
-                        var compressBuffer = StringUtil.DecompressInSnappy(bufferCompressed,0, bufferCompressed.Length);
+                        using var bufferCompressed = await fromStream.ReadNextQLengthBytesRented();
+                        if (bufferCompressed == null) break;
+                        using var compressBuffer = StringUtil.DecompressInSnappyToRented(bufferCompressed.Buffer, 0, bufferCompressed.Length);
                         bytesRead = compressBuffer.Length;
-                        await toStream.WriteAsync(compressBuffer, 0, bytesRead, ct).ConfigureAwait(false);
+                        await toStream.WriteAsync(compressBuffer.Buffer.AsMemory(0, bytesRead), ct).ConfigureAwait(false);
                     }
                 }
                 else
                 {
                     while ((bytesRead =
-                               await fromStream.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) != 0)
-                    {
-                        await toStream.WriteAsync(buffer, 0, bytesRead, ct).ConfigureAwait(false);
-                    }
+                               await fromStream.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false)) != 0)
+                     {
+                        await toStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct).ConfigureAwait(false);
+                     }
                 }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
             }
             Router.Logger.Debug($"{epString}对节点传输关闭。");
 
@@ -683,37 +699,55 @@ namespace NSmartProxy.Client
         private async Task ToStaticTransfer(CancellationToken ct, NetworkStream fromStream, NetworkStream toStream,
             string epString, ClientApp item)
         {
-            byte[] buffer = new byte[Global.ClientTunnelBufferSize];
-            using (fromStream)
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(Global.ClientTunnelBufferSize);
+            try
             {
                 int bytesRead;
                 while ((bytesRead =
-                           await fromStream.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) != 0)
-                {
+                           await fromStream.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false)) != 0)
+                 {
                     if (item.IsCompress)
                     {
-                        //Array.Resize(array: ref buffer, newSize: bytesRead);//此处存在copy，需要看看snappy是否支持偏移量数组
-                        var compressInSnappy = StringUtil.CompressInSnappy(buffer, 0, bytesRead);
-                        //var compressedBuffer = compressInSnappy.ContentBytes;
-                        //bytesRead = compressInSnappy.Length;
-                        //TODO 封包传送
+                        using var compressInSnappy = PooledByteBuffer.Rent(StringUtil.GetMaxCompressedLengthInSnappy(bytesRead));
+                        int compressedLength = StringUtil.CompressInSnappy(buffer, 0, bytesRead, compressInSnappy.Buffer);
                         if (ct.IsCancellationRequested) { Global.Logger.Info("=传输外部中止="); return; }
-                        await toStream.WriteQLengthBytes(compressInSnappy.ContentBytes, compressInSnappy.Length).ConfigureAwait(false);
+                        await toStream.WriteQLengthBytes(compressInSnappy.Buffer, compressedLength).ConfigureAwait(false);
                     }
                     else
                     {
-                        await toStream.WriteAsync(buffer, 0, bytesRead, ct).ConfigureAwait(false);
+                        await toStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct).ConfigureAwait(false);
                     }
                 }
             }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
             Router.Logger.Debug($"{epString}反向链接传输关闭。");
+        }
+
+        private void TryShutdownSend(TcpClient client)
+        {
+            try
+            {
+                if (client?.Client != null && client.Client.Connected)
+                {
+                    client.Client.Shutdown(SocketShutdown.Send);
+                }
+            }
+            catch
+            {
+                // Ignore half-close failures; the outer close path will clean up.
+            }
         }
 
         private void SendZero(int port)
         {
             TcpClient tc = new TcpClient();
             tc.Connect("127.0.0.1", port);
-            tc.Client.Send(new byte[] { 0x00 });
+            Span<byte> zero = stackalloc byte[1];
+            zero[0] = 0x00;
+            tc.Client.Send(zero);
         }
         public string GetProviderEndPoint()
         {

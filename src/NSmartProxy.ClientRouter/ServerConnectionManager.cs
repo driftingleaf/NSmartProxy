@@ -60,11 +60,11 @@ namespace NSmartProxy.Client
             {
                 clientModel = await SendConfigRequest();
             }
-            catch (Exception ex) //如果这里出错，则自动删除缓存
+            catch (Exception) //如果这里出错，则自动删除缓存
             {
                 //TODO 2 判断服务端返回错误类型，如果是校验错误，则清空缓存
 
-                throw ex;
+                throw;
             }
 
             //要求服务端分配资源并获取服务端配置
@@ -93,18 +93,22 @@ namespace NSmartProxy.Client
             //《c#并发编程经典实例》 9.3 超时后取消
             var config = ClientConfig;
             Router.Logger.Debug("Reading Config From Provider..");
-            TcpClient configClient = new TcpClient();
-            configClient.NoDelay = true;//配置协议不使用nagle
+            TcpClient configClient = null;
             bool isConnected = false;
             bool isReconn = (this.ClientID != 0); //TODO XXX如果clientid已经分配到了id 则算作重连
             for (int j = 0; j < 3; j++) //连接服务端
             {
-                var delayDispose = Task.Delay(TimeSpan.FromSeconds(Global.DefaultConnectTimeout)).ContinueWith(_ => configClient.Dispose());
-                var connectAsync = configClient.ConnectAsync(config.ProviderAddress, config.ConfigPort);
-                //超时则dispose掉
-                var comletedTask = await Task.WhenAny(delayDispose, connectAsync);
-                if (!connectAsync.IsCompleted) //超时
+                configClient?.Dispose();
+                configClient = new TcpClient
                 {
+                    NoDelay = true
+                };
+
+                var connectAsync = configClient.ConnectAsync(config.ProviderAddress, config.ConfigPort);
+                var completedTask = await Task.WhenAny(connectAsync, Task.Delay(Global.DefaultConnectTimeout));
+                if (completedTask != connectAsync) //超时
+                {
+                    configClient.Dispose();
                     Router.Logger.Debug("ReadConfigFromProvider连接超时，5秒后重试。");
                     await Task.Delay(5000);
                 }
@@ -128,7 +132,7 @@ namespace NSmartProxy.Client
             if (isReconn) requestByte0 = (byte)ServerProtocol.Reconnect;//重连则发送重连协议
             else requestByte0 = (byte)ServerProtocol.ClientNewAppRequest;
 
-            await configStream.WriteAsync(new byte[] { requestByte0 }, 0, 1);
+            configStream.WriteByte(requestByte0);
 
             //请求1 端口数
             var requestBytes = new ClientNewAppRequest
@@ -393,21 +397,16 @@ namespace NSmartProxy.Client
                     {
                         //2.接收ack 超时则重发
                         byte[] onebyte = new byte[1];
-                        var delayDispose =
-                            Task.Delay(Global.DefaultWriteAckTimeout); //.ContinueWith(_ => client.Dispose());
+                        var readBytes = await client.GetStream().ReadAsync(onebyte, 0, 1, Global.DefaultWriteAckTimeout);
 
-                        var readBytes = client.GetStream().ReadAsync(onebyte, 0, 1);
-                        //超时则dispose掉
-                        var comletedTask = await Task.WhenAny(delayDispose, readBytes);
-
-                        if (!readBytes.IsCompleted)
+                        if (readBytes < 0)
                         {
                             //TODO 连接超时，需要外部处理，暂时无法内部处理
                             Router.Logger.Error("服务端心跳连接超时", new Exception("服务端心跳连接超时"));
                             ServerNoResponse();
                             break;
                         }
-                        else if (readBytes.Result == 0)
+                        else if (readBytes == 0)
                         {
                             //TODO 连接已关闭
                             Router.Logger.Debug("服务端心跳连接已关闭");
