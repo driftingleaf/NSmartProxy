@@ -1,53 +1,127 @@
-<img src="https://github.com/tmoonlight/NSmartProxy/blob/master/NSmartProxyNew.png">
+<img src="NSmartProxyNew.png" alt="NSmartProxy Server" width="420">
 
-# NSmartProxy Server
+# NSmartProxy Server Guide
 
-Here is the installation method of NSmartProxy server (Linux, windows, MacOS are compatible)<br />
+[Project README](./README.md) | [English README](./README_EN.md) | Server Guide | [服务端说明](./README_SERVER_CN.md)
 
-## Startup preparation
-* First of all, you need a server with a separate IP, the following installation process is performed on this machine:
-#### Linux/Windows/MacOS
-1. Install [.NET Core Environment](https://dotnet.microsoft.com/download)<br />
-2. Download the latest version of [NSmartProxy](https://github.com/tmoonlight/NSmartProxy/releases)
+> Note: this repository is a maintained fork of the original project [tmoonlight/NSmartProxy](https://github.com/tmoonlight/NSmartProxy).
 
-#### Docker
-* You can run the nspserver directly without having to install the runtime. Four sets of ports are required to run the docker image: configuration port, reverse connection port, API service port and consumer port:
-```
-sudo docker pull tmoonlight/nspserver
-sudo docker run --name mynspserver -dit -p 7842:7842 -p 7841:7841 -p 12309:12309 -p 20000-20050 tmoonlight/nspserver
-```
+This document focuses only on the public server side of NSmartProxy.
 
-## Instructions
-1. Unzip the package of NSmartProxy server.
-2. Open the appsettings.json file in the installation directory, set the reverse connection port and configure the service port:<br />
-```
+## What the server does
+
+The server is the public entry point. It is responsible for:
+
+- accepting reverse connections from clients
+- listening on public consumer ports
+- matching incoming traffic to a mapped app
+- telling the client to connect back to the local target service
+- forwarding traffic between both sides
+
+## Runtime model
+
+The current host is a plain console application.
+
+Recommended startup:
+
+- Linux: run the self-contained executable directly
+- Windows: run the self-contained executable directly
+
+Do not rely on the old Windows service wrapper commands from older releases.
+
+## Server configuration
+
+Example file: [`src/NSmartProxy.ServerHost/appsettings.json`](</D:/Work/QuestionByAi/NSmartProxy/src/NSmartProxy.ServerHost/appsettings.json>)
+
+```json
 {
-  "ReversePort": 7842, //Reverse connection port
-  "ConfigPort": 7841, //Configure the service port
-  "WebAPIPort": 12309 //API service port
+  "ReversePort": 7842,
+  "ConfigPort": 7841,
+  "WebAPIPort": 12309,
+  "ReversePort_Out": 0,
+  "ConfigPort_Out": 0
 }
 ```
-<br />
-3. Run NSmartProxy Server<br />
 
+Field summary:
 
-* Linux/MacOS:
-Change directory to the installation directory ,then execute the following command:
+- `ReversePort`: client reverse connection port
+- `ConfigPort`: config and heartbeat port
+- `WebAPIPort`: web management port
+- `ReversePort_Out`: optional external reverse port override
+- `ConfigPort_Out`: optional external config port override
+
+## Start the server
+
+Linux:
+
+```bash
+chmod +x ./NSmartProxy.ServerHost
+./NSmartProxy.ServerHost
 ```
-sudo dotnet NSmartProxy.ServerHost.dll
-```
-* Windows:
-Press Windows+R to open the “Run” box. Type “cmd” into the box and then press Ctrl+Shift+Enter to run the command as an administrator.
-Change directory to the installation directory ,then execute the following command:
-```
-dotnet NSmartProxy.ServerHost.dll
+
+Windows:
+
+```powershell
+.\NSmartProxy.ServerHost.exe
 ```
 
+Web console:
 
-In the next step,you can log in to http://youraddress:12309 and enter the web terminal. The default user password is admin/admin.
+```text
+http://<server-ip>:12309
+```
 
-<img src="https://github.com/tmoonlight/100lines/raw/master/6.nspserverrunnning_1.gif" />
+On a clean database, the default admin account is:
 
-And enter the server to perform various management operations.
+```text
+admin / admin
+```
 
-<img src="https://github.com/tmoonlight/100lines/raw/master/6.nspserverrunnning_2.gif" />
+## Network ports
+
+Typical exposed ports:
+
+- `7842`: reverse connections from clients
+- `7841`: config and heartbeat channel
+- `12309`: web management
+- dynamic consumer ports such as `52999`: public app entry ports
+
+If you place another reverse proxy or port translation layer in front of NSmartProxy, configure `*_Out` as needed.
+
+## Recommended production layout
+
+For APIs and web services, use:
+
+```text
+External user
+  -> Nginx / Caddy
+  -> NSmartProxy server
+  -> NSmartProxy client
+  -> local target service
+```
+
+Especially for OpenAI-compatible APIs and SSE traffic:
+
+- keep NSmartProxy in `TCP` mode
+- let `Nginx` or `Caddy` handle domain, TLS, and reverse proxy behavior
+
+## Build and publish
+
+Build:
+
+```powershell
+dotnet build .\src\NSmartProxy.ServerHost\NSmartProxy.ServerHost.csproj -c Release
+```
+
+Self-contained publish for Linux:
+
+```powershell
+dotnet publish .\src\NSmartProxy.ServerHost\NSmartProxy.ServerHost.csproj -c Release -r linux-x64 --self-contained true
+```
+
+## Related docs
+
+- Main project README: [README.md](</D:/Work/QuestionByAi/NSmartProxy/README.md>)
+- Upgrade notes: [docs/2026-04-29-net10-upgrade-and-optimization.md](</D:/Work/QuestionByAi/NSmartProxy/docs/2026-04-29-net10-upgrade-and-optimization.md>)
+- Architecture review: [docs/2026-04-29-nsmartproxy-principle-and-optimization-review.md](</D:/Work/QuestionByAi/NSmartProxy/docs/2026-04-29-nsmartproxy-principle-and-optimization-review.md>)

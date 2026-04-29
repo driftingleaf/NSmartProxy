@@ -1,283 +1,195 @@
+<img src="NSmartProxyNew.png" alt="NSmartProxy" width="420">
 
+# NSmartProxy
 
-<img src="http://2017studio.oss-accelerate.aliyuncs.com/NSmartProxyNew.png">
+[中文](./README.md) | [English](./README_EN.md) | [Server Guide](./README_SERVER.md) | [服务端说明](./README_SERVER_CN.md)
 
-[![GitHub
-release](https://img.shields.io/github/release/tmoonlight/NSmartProxy.svg?logoColor=%21%5BGitHub%20release%5D%28https%3A%2F%2Fimg.shields.io%2Fgithub%2Frelease%2Ftmoonlight%2FNSmartProxy.svg%29)](https://github.com/tmoonlight/NSmartProxy/releases)
-[![GitHub](https://img.shields.io/github/license/tmoonlight/NSmartProxy.svg)](https://github.com/tmoonlight/NSmartProxy/blob/master/LICENSE)
-[![Build
-Status](https://dev.azure.com/tmoonlight/NSmartProxy/_apis/build/status/tmoonlight.NSmartProxy?branchName=master)](https://dev.azure.com/tmoonlight/NSmartProxy/_build/latest?definitionId=1&branchName=master)
-<br />
-![Docker Pulls](https://img.shields.io/docker/pulls/tmoonlight/nspclient?label=nspclient%20docker%20pulls)
-![Docker Pulls](https://img.shields.io/docker/pulls/tmoonlight/nspserver?label=nspserver%20docker%20pulls)<br />
-中文版 \|
-[English](https://github.com/tmoonlight/NSmartProxy/blob/master/README_EN.md)
+> 说明：本仓库基于原项目 [tmoonlight/NSmartProxy](https://github.com/tmoonlight/NSmartProxy) fork 后继续维护和修改。
 
-NSmartProxy
-===========
+`NSmartProxy` 是一个基于“反向连接池 + 服务端统一转发”的内网穿透工具。
 
-#### 什么是NSmartProxy？<br />
+它的工作方式不是 P2P 打洞，而是：
 
-NSmartProxy是一款免费的内网穿透工具。<br />
-使用中如果有任何问题和建议，可以[点击这里加入Gitter群组](https://gitter.im/tmoonlight/NSmartProxy)或者[点击这里加入QQ群
-（群号：813170640）](//shang.qq.com/wpa/qunwpa?idkey=139dc3d01be5cc7ac3226c022d832b8ddcc4ec4b64d8755cd4f5c669994970c7)我们一起讨论。
+1. 内网客户端主动连接公网服务端
+2. 服务端维护每个映射应用的待命反向连接
+3. 外部用户访问公网端口时，服务端取出一条反向连接
+4. 客户端再去连接本地真实服务，双方开始双向转发
 
-目录
-----
- -   [特点](#特点)
- -   [运行原理](#运行原理)
- -   [客户端安装](#客户端安装)
-     -   [启动准备](#启动准备)
-     -   [使用方法](#使用方法)
- -   [服务端安装](#服务端安装)
-     -   [启动准备](#启动准备-1)
-     -   [使用方法](#使用方法-1)
- -   [使用案例](#使用案例)
+当前仓库已经整理到更适合实际部署的状态：
 
-特点
-----
+- 主链路已升级到 `.NET 10`
+- 推荐直接使用自包含发布产物
+- 服务端和客户端都按普通控制台程序运行
+- 不再依赖旧的 Windows Service 宿主封装
 
-1.  跨平台，客户端和服务端均可运行在MacOS，Linux，Windows系统上；<br />
-2.  使用方便，配置简单；<br />
-3.  多端映射，只需安装一个NSmartProxy客户端可映射整个局域网内的多种服务；
-4.  支持TCP协议栈下的所有协议（已经经过测试的有FTP、Telnet、SMTP、HTTP/HTTPS、POP3、SMB、VNC、RDP。），以及相当一部分基于UDP的协议（已经经过测试的有DNS查询、mosh服务）。
+## 当前建议
 
-运行原理
---------
+- 如果你要穿透本地 API、网页、`new-api`、OpenAI 兼容接口，优先使用 `Protocol: TCP`
+- 如果你还需要域名、HTTPS、反向代理、SSE 友好行为，建议在公网服务器前面再挂 `Nginx` 或 `Caddy`
+- 仓库里的 `HTTP` 模式仍然保留，但更适合简单按 `Host` 分流，不建议承担复杂网关职责
 
-NSmartProxy包含两个服务程序：<br /> 
-* 服务端（NSmartProxy.ServerHost）：部署在外网，用来接收来自最终使用者和客户端的反向连接，并将它们进行相互转发。
-* 客户端（NSmartProxyClient）：部署在内网，用来转发访问内网各种服务的请求以及响应。
-<img src="http://2017studio.oss-accelerate.aliyuncs.com/theo.png">
+## 仓库结构
 
-客户端安装
-----------
+- `src/NSmartProxy.ServerHost`: 服务端宿主
+- `src/NSmartProxyClient`: 客户端宿主
+- `src/NSmartProxy`: 服务端核心逻辑
+- `src/NSmartProxy.ClientRouter`: 客户端路由与转发逻辑
+- `src/NSmartProxy.Infrastructure`: 公共基础设施
+- `publish/`: 本地发布产物目录
 
-NSmartProxy支持各种基于TCP和UDP服务的端口映射，下面以mstsc,iis,ftp以及mosh服务为例：<br />
+## 快速开始
 
-### 启动准备
+下面是一套当前最推荐、也是本次联调验证过的最小用法。
 
-NSmartProxy的客户端被打包成三种发布方式：第一种是跨平台包，需要预先安装[.NET
-Core环境](https://dotnet.microsoft.com/download)。
-第二种是SCD包（包名带"scd"），无需安装.net环境，用户需要根据自己的平台和架构选择相应的压缩包。第三种是Windows窗体版本（包名带"winform"）：
-#### Windows 
-1. 确保客户端的环境在.NET Framework 4.6.1 以上。 
-2. 下载最新的窗体版本https://github.com/tmoonlight/NSmartProxy/releases/download/v1.2_final4/nspclient_winform_v1.2_final4.zip
+### 1. 启动服务端
 
-#### Linux
+服务端配置文件示例，见 [`src/NSmartProxy.ServerHost/appsettings.json`](</D:/Work/QuestionByAi/NSmartProxy/src/NSmartProxy.ServerHost/appsettings.json>)：
 
--  下载最新版本的NSmartProxyClient，以SCD发布下的linux x64系统为例：
+```json
+{
+  "ReversePort": 7842,
+  "ConfigPort": 7841,
+  "WebAPIPort": 12309,
+  "ReversePort_Out": 0,
+  "ConfigPort_Out": 0
+}
+```
 
-<!-- -->
+含义：
 
-    wget https://github.com/tmoonlight/NSmartProxy/releases/download/v1.2_final4/nspserver_scd_linux_v1.2_final4.zip
+- `ReversePort`: 客户端反向连接接入端口
+- `ConfigPort`: 客户端配置与心跳端口
+- `WebAPIPort`: Web 管理端口
+- `*_Out`: 服务端存在额外端口映射时可选配置，默认 `0` 即使用本机端口
 
-#### MacOS
+Linux 运行方式：
 
--  下载最新版本的NSmartProxyClient：
+```bash
+chmod +x ./NSmartProxy.ServerHost
+./NSmartProxy.ServerHost
+```
 
-<!-- -->
+Windows 运行方式：
 
-    wget https://github.com/tmoonlight/NSmartProxy/releases/download/v1.2_final4/nspclient_scd_osx_v1.2_final4.zip
+```powershell
+.\NSmartProxy.ServerHost.exe
+```
 
-#### Docker
+启动后访问：
 
--   如果当前机器上已经有了docker运行环境，则无需安装运行时，直接拉取镜像即可运行，如下脚本在Docker
-    CE 17.09下测试通过：
+```text
+http://<server-ip>:12309
+```
 
-<!-- -->
+如果你使用的是已有数据库，请以现有用户体系为准。
 
-    sudo docker pull tmoonlight/nspclient
-    sudo docker run --name mynspclient -dit tmoonlight/nspclient
+### 2. 启动客户端
 
-### 使用方法
+客户端配置文件示例，见 [`src/NSmartProxyClient/appsettings.json`](</D:/Work/QuestionByAi/NSmartProxy/src/NSmartProxyClient/appsettings.json>)。
 
-1.  打开安装目录下的appsettings.json文件，配置服务地址，映射地址和端口（winform版本也兼容这种配置方式，也可直接进入界面配置）：<br />
+下面给一个更贴近当前推荐用法的最小配置：
 
-<!-- -->
-
+```json
+{
+  "ProviderWebPort": 12309,
+  "ProviderAddress": "your-server-ip",
+  "Clients": [
     {
-      "ProviderWebPort": 12309,         //服务器端口
-      "ProviderAddress": "2017studio.imwork.net",   //服务器地址
-
-      //反向代理客户端列表
-      "Clients": [
-        {//mstsc远程控制服务
-          "IP": "127.0.0.1",           //反向代理机器的ip
-          "TargetServicePort": "3389"  //反向代理服务的端口
-          "ConsumerPort":"3389"          //外网访问端口，如被占用，则会从20000开始按顺序分配端口
-        },
-        {//网站服务
-          "IP": "127.0.0.1",
-          "TargetServicePort": "80"
-        },
-        {//ftp服务
-          "IP": "127.0.0.1",
-          "TargetServicePort": "21",
-          "IsCompress" : true,      //表示启动传输压缩
-          "Description": "这是一个ftp协议。" //描述字段，方便用户在服务端界面识别
-        },
-        {//mosh服务 
-          "IP": "192.168.0.168",    //安装mosh服务的受控端地址
-          "TargetServicePort": "60002",
-          "ConsumerPort": "30002",  
-          "Protocol": "UDP"     //表示是一个UDP协议，如果不加以配置，则以TCP协议来转发
-        }
-      ]
+      "IP": "127.0.0.1",
+      "TargetServicePort": 3000,
+      "ConsumerPort": 52999,
+      "Protocol": "TCP",
+      "IsCompress": false,
+      "Description": "local api"
     }
-
-<br /> 2. 运行NSmartProxy客户端 <br />
-
--   Linux：
-
-<!-- -->
-
-        sudo unzip nspclient_scd_linux_v1.2.zip
-        cd nspclient_scd_linux_v1.2
-        chmod +x ./NSmartProxyClient
-        ./NSmartProxyClient
-
--   MacOS：
-
-<!-- -->
-
-        sudo unzip nspclient_osx_linux_v1.2.zip
-        cd nspclient_scd_osx_v1.2
-        chmod +x ./NSmartProxyClient
-        ./NSmartProxyClient
-
--   Windows： 解压后运行NSmartProxyWinform.exe即可:
-
-    <img src="http://2017studio.oss-accelerate.aliyuncs.com/5.nspclientwinformrunning.gif" />
-    <br />
-
-3.  后台运行：<br />
-    您还可以将NSmartProxy客户端注册为一个后台服务，方法如下：
-
--   Windows：<br /> 
-    - 方法一<br />
-    <img src="https://github.com/tmoonlight/NSmartProxy/raw/master/imgs/servicecn.png"><br />
-
-    - 方法二<br />
+  ]
+}
 ```
-    rem 注册客户端windows服务
-    .\NSmartProxyClient action:install
-```
-```
-    rem 卸载客户端windows服务
-    .\NSmartProxyClient action:uninstall
-```
--   MacOS/Linux 暂略
 
-#### 客户端登陆
-默认情况下，客户端以<b>匿名登陆</b>，这种方式会在NSmartProxyServer端创建一个随机匿名用户（前提是服务端配置了允许<b>匿名登陆</b>），如果想显式使用特定用户登陆，需要在第一次运行时增加-u 用户名 -p 密码参数，程序会在当前目录生成一份凭据（.usercache）方便下次自动登陆。
-例如输入以下指令来生成一个用户名admin，密码admin123的凭据：
+含义：
+
+- `ProviderAddress`: 公网服务端地址
+- `ProviderWebPort`: 服务端 Web/API 管理端口
+- `TargetServicePort`: 内网真实服务端口
+- `ConsumerPort`: 对外暴露端口
+- `Protocol`: 推荐填 `TCP`
+- `IsCompress`: 调试阶段建议先关掉，确认链路无误后再评估是否开启
+
+Windows 运行方式：
+
+```powershell
+.\NSmartProxyClient.exe
 ```
-./NSmartProxyClient -u admin -p admin123
+
+如需显式登录：
+
+```powershell
+.\NSmartProxyClient.exe -u admin -p admin123
 ```
-下次仅需使用：
-```
+
+Linux 或 macOS 运行方式：
+
+```bash
+chmod +x ./NSmartProxyClient
 ./NSmartProxyClient
 ```
-自动采用上次的admin用户登陆，如需恢复匿名登陆，则需要删除当前目录下的.usercache文件。
 
--   P.S：
-    以上是客户端的配置方法，一般情况下，只要用我的免费服务（2017studio.imwork.net）即可进行内网映射了，如果你还想自己搭建服务端，请接着往下看。
+### 3. 验证链路
 
-服务端安装
-----------
+假设客户端把本地 `127.0.0.1:3000` 映射到了公网 `52999`，那么外部访问：
 
-这里介绍NSmartProxy服务端的安装方法（linux,windows,MacOS均适用）<br />
+```text
+http://<server-ip>:52999
+```
 
-### 启动准备
+如果你映射的是 HTTP API，本地直连和公网访问应返回一致的状态码、响应头和响应体语义。
 
--   首先你需要一台具备独立IP的服务器，以下安装过程均在此机器上执行：
-#### Linux/Windows/MacOS
+## 推荐部署方式
 
-1.  NSmartProxy的服务端程序被打包成两种发布方式。第一种是跨平台包，需要预先安装[.NET
-    Core环境](https://dotnet.microsoft.com/download)。
-    第二种是SCD包（包名带"scd"），无需安装.net环境，用户需要根据自己的平台和架构选择相应的压缩包。<br />
-2.  下载最新版的NSmartProxy服务端：
--   Linux：
-<!-- -->
-    wget https://github.com/tmoonlight/NSmartProxy/releases/download/v1.2_final4/nspserver_scd_linux_v1.2_final4.zip
+对于当前仓库代码状态，最推荐的部署组合是：
 
--   Windows：<br />
-下载https://github.com/tmoonlight/NSmartProxy/releases/download/v1.2_final4/nspserver_scd_win_v1.2_final4.zip
+```text
+外部用户
+  -> 公网服务器
+  -> Nginx / Caddy
+  -> NSmartProxy 服务端
+  -> NSmartProxy 客户端
+  -> 本地真实服务
+```
 
--   MacOS：
-<!-- -->
+尤其是大模型中转站、OpenAI 兼容 API、SSE 流式响应场景，建议：
 
-    wget https://github.com/tmoonlight/NSmartProxy/releases/download/v1.2_final4/nspserver_scd_osx_v1.2_final4.zip
+- `NSmartProxy` 只做 `TCP` 穿透
+- `Nginx` / `Caddy` 负责 `80/443`、TLS、域名和反向代理
 
-#### Docker
+## 构建与发布
 
--   无需安装运行时，直接拉取镜像即可运行，运行镜像时需要4组端口：配置端口，反向连接端口，API服务端口，以及使用端口，如下脚本在Docker
-    CE 17.09下测试通过：
+本地构建：
 
-<!-- -->
+```powershell
+dotnet build .\src\NSmartProxy.ServerHost\NSmartProxy.ServerHost.csproj -c Release
+dotnet build .\src\NSmartProxyClient\NSmartProxyClient.csproj -c Release
+```
 
-    sudo docker pull tmoonlight/nspserver
-    sudo docker run --name mynspserver -dit -p 7842:7842 -p 7841:7841 -p 12309:12309 -p 20000-20050 tmoonlight/nspserver
+自包含发布：
 
-### 使用方法
+```powershell
+dotnet publish .\src\NSmartProxy.ServerHost\NSmartProxy.ServerHost.csproj -c Release -r linux-x64 --self-contained true
+dotnet publish .\src\NSmartProxyClient\NSmartProxyClient.csproj -c Release -r win-x64 --self-contained true
+```
 
-1.  解压缩NSmartProxy服务端的压缩包，以下以SCD发布下的linux系统为例
+## 相关文档
 
-<!-- -->
+- 变更记录：[CHANGELOG.md](</D:/Work/QuestionByAi/NSmartProxy/CHANGELOG.md>)
+- `.NET 10` 升级与优化说明：[docs/2026-04-29-net10-upgrade-and-optimization.md](</D:/Work/QuestionByAi/NSmartProxy/docs/2026-04-29-net10-upgrade-and-optimization.md>)
+- 原理与优化评审：[docs/2026-04-29-nsmartproxy-principle-and-optimization-review.md](</D:/Work/QuestionByAi/NSmartProxy/docs/2026-04-29-nsmartproxy-principle-and-optimization-review.md>)
 
-    unzip nspserver_scd_linux_v1.2_final4.zip
+## 当前已知边界
 
-2.  打开安装目录下的appsettings.json文件，设置反向连接端口和配置服务端口，如果没有特殊需求，默认就好：<br />
+- 服务端仍然存在一些“正常取消被记录为未观察异常”的日志噪音
+- `HTTP` 模式适合简单场景，不建议替代专业 Web 网关
+- 复杂 API 穿透优先用 `TCP`，并在前面加标准反向代理
 
-<!-- -->
+## 许可证
 
-    {
-      "ReversePort": 7842, //反向连接端口
-      "ConfigPort": 7841, //配置服务端口
-      "WebAPIPort": 12309         //API服务端口
-    }
-
-3. 运行NSmartProxy <br />
-
-第一步 cd到安装目录 <br /> 第二步 执行以下命令 
-* Linux/MacOS：
-<!-- -->
-    chmod +x ./NSmartProxy.ServerHost
-    ./NSmartProxy.ServerHost
-
-* Windows：
-点击 Win+R 打开运行窗口. 输入 "cmd" 按下Ctrl+Shift+Enter打开管理员身份运行的命令行窗口。cd到安装目录，运行如下指令：
-<!-- -->
-    NSmartProxy.ServerHost
-
-第三步 登陆http://ip:12309 进入web端，出厂用户密码为admin/admin
-
-<img src="http://2017studio.oss-accelerate.aliyuncs.com/6.nspserverrunnning_1.gif" />
-
-第四步 进入服务端对用户进行各种管理操作
-
-<img src="http://2017studio.oss-accelerate.aliyuncs.com/6.nspserverrunnning_2.gif" />
-
-####   注册为后台服务<br />
-NSmartProxy客户端和服务端均可以注册为一个后台服务，方法如下：
-* Windows
-    以管理员身份打开命令行后，cd到程序运行目录，运行以下指令进行服务的注册和卸载：
-
-<!-- -->
-
-    rem 注册服务端windows服务
-    .\NSmartProxy.ServerHost action:install
-
-    rem 卸载服务端windows服务
-    .\NSmartProxy.ServerHost action:uninstall
-
-* MacOS/Linux <br />
-可参考wiki: [How To: 30秒使用Linux搭建一个内网穿透服务端](https://github.com/tmoonlight/NSmartProxy/wiki/How-To:-30%E7%A7%92%E4%BD%BF%E7%94%A8Linux%E6%90%AD%E5%BB%BA%E4%B8%80%E4%B8%AA%E5%86%85%E7%BD%91%E7%A9%BF%E9%80%8F%E6%9C%8D%E5%8A%A1%E7%AB%AF)
-
-使用案例
---------
-以上已经讲述了将内网的服务映射到外网的方法，还有更多有趣的用法等着你发掘：<br />
-1. 远程开机 
-2. [使用windows远程控制操作办公室电脑](https://github.com/tmoonlight/NSmartProxy/wiki/How-To:-%E4%BD%BF%E7%94%A8NSmartProxy%E5%AE%9E%E7%8E%B0windows%E4%B8%8A%E7%9A%84%E8%BF%9C%E7%A8%8B%E5%8A%9E%E5%85%AC) 
-3. 告别昂贵的vps，以极低的成本制作一个更强大的服务集群<br />
+项目许可证见 [LICENSE](</D:/Work/QuestionByAi/NSmartProxy/LICENSE>)。

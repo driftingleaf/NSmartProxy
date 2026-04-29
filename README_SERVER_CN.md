@@ -1,66 +1,127 @@
+<img src="NSmartProxyNew.png" alt="NSmartProxy Server" width="420">
 
-<img src="https://github.com/tmoonlight/NSmartProxy/blob/master/NSmartProxyNew.png">
+# NSmartProxy 服务端说明
 
-# NSmartProxy ServerHost
+[项目首页](./README.md) | [English README](./README_EN.md) | [Server Guide](./README_SERVER.md) | 服务端说明
 
-这里介绍NSmartProxy服务端的安装方法（linux,windows,MacOS均适用）<br />
+> 说明：本仓库基于原项目 [tmoonlight/NSmartProxy](https://github.com/tmoonlight/NSmartProxy) fork 后继续维护和修改。
 
-## 启动准备
-* 首先你需要一台具备独立IP的服务器，以下安装过程均在此机器上执行：
-#### Linux/Windows/MacOS
-1.安装[.NET Core环境](https://dotnet.microsoft.com/download)<br />
-2.下载最新版的[NSmartProxy](https://github.com/tmoonlight/NSmartProxy/releases
+这份文档只聚焦 `NSmartProxy` 的公网服务端。
 
-#### Docker
-* 无需安装运行时，直接拉取镜像即可运行，运行镜像时需要4组端口：配置端口，反向连接端口，API服务端口，以及使用端口 ：
-```
-sudo docker pull tmoonlight/nspserver
-sudo docker run --name mynspserver -dit -p 7842:7842 -p 7841:7841 -p 12309:12309 -p 20000-20050 tmoonlight/nspserver
-```
+## 服务端负责什么
 
-## 使用方法
-1. 解压缩NSmartProxy服务端的压缩包。
-2. 打开安装目录下的appsettings.json文件，设置反向连接端口和配置服务端口：<br />
-```
+服务端是公网入口，主要职责有：
+
+- 接收客户端建立的反向连接
+- 监听对外暴露的消费端口
+- 把外部请求匹配到具体映射应用
+- 通知客户端回连本地真实服务
+- 在服务端与客户端之间转发流量
+
+## 当前运行方式
+
+当前版本的服务端宿主已经是普通控制台程序。
+
+推荐方式：
+
+- Linux：直接运行自包含可执行文件
+- Windows：直接运行自包含可执行文件
+
+不再建议使用旧版本里那套 Windows Service 包装命令。
+
+## 服务端配置
+
+配置文件示例见 [`src/NSmartProxy.ServerHost/appsettings.json`](</D:/Work/QuestionByAi/NSmartProxy/src/NSmartProxy.ServerHost/appsettings.json>)：
+
+```json
 {
-  "ReversePort": 7842, //反向连接端口
-  "ConfigPort": 7841, //配置服务端口
-  "WebAPIPort": 12309         //API服务端口
+  "ReversePort": 7842,
+  "ConfigPort": 7841,
+  "WebAPIPort": 12309,
+  "ReversePort_Out": 0,
+  "ConfigPort_Out": 0
 }
 ```
-<br />
-3. 运行NSmartProxy <br />
 
-第一步 cd到安装目录 <br />
-第二步 执行以下命令
-* Linux/MacOS：
-```
-sudo dotnet NSmartProxy.ServerHost.dll
-```
-* Windows：
-点击 Win+R 打开运行窗口. 输入 “cmd” 按下 Ctrl+Shift+Enter打开管理员身份运行的命令行窗口。 cd到安装目录，运行如下指令：
+字段说明：
 
-```
-dotnet NSmartProxy.ServerHost.dll
-```
+- `ReversePort`：客户端反向连接接入端口
+- `ConfigPort`：配置与心跳端口
+- `WebAPIPort`：Web 管理端口
+- `ReversePort_Out`：可选的公网反向连接端口覆盖值
+- `ConfigPort_Out`：可选的公网配置端口覆盖值
 
-第三步 登陆http://ip:12309 进入web端，出厂用户密码为admin/admin
+## 启动服务端
 
-<img src="https://github.com/tmoonlight/100lines/raw/master/6.nspserverrunnning_1.gif" />
+Linux：
 
-第四步 进入服务端对用户进行各种管理操作
-
-<img src="https://github.com/tmoonlight/100lines/raw/master/6.nspserverrunnning_2.gif" />
-
-* 注册为后台服务<br />
-您还可以将NSmartProxy客户端注册为一个后台服务，方法如下：
-以管理员身份打开命令行后，运行以下指令进行服务的注册和卸载：
-```
-rem 注册windows服务
-dotnet NSmartProxy.ServerHost.dll action:install
+```bash
+chmod +x ./NSmartProxy.ServerHost
+./NSmartProxy.ServerHost
 ```
 
+Windows：
+
+```powershell
+.\NSmartProxy.ServerHost.exe
 ```
-rem 卸载windows服务
-dotnet NSmartProxy.ServerHost.dll action:uninstall
+
+管理后台地址：
+
+```text
+http://<server-ip>:12309
 ```
+
+如果是全新数据库，当前代码会创建默认管理员：
+
+```text
+admin / admin
+```
+
+## 常见端口
+
+典型会用到这些端口：
+
+- `7842`：客户端反向连接
+- `7841`：配置与心跳
+- `12309`：Web 管理端
+- 动态消费端口，例如 `52999`：公网业务入口
+
+如果你在服务端前面又套了一层端口映射或反向代理，可以按需配置 `*_Out`。
+
+## 推荐部署形态
+
+对 API 和网页服务，推荐：
+
+```text
+外部用户
+  -> Nginx / Caddy
+  -> NSmartProxy 服务端
+  -> NSmartProxy 客户端
+  -> 本地真实服务
+```
+
+尤其是 OpenAI 兼容 API、SSE 流式场景，建议：
+
+- `NSmartProxy` 只跑 `TCP` 穿透
+- `Nginx` / `Caddy` 负责域名、TLS 和反向代理行为
+
+## 构建与发布
+
+构建：
+
+```powershell
+dotnet build .\src\NSmartProxy.ServerHost\NSmartProxy.ServerHost.csproj -c Release
+```
+
+发布 Linux 自包含产物：
+
+```powershell
+dotnet publish .\src\NSmartProxy.ServerHost\NSmartProxy.ServerHost.csproj -c Release -r linux-x64 --self-contained true
+```
+
+## 相关文档
+
+- 项目首页：[README.md](</D:/Work/QuestionByAi/NSmartProxy/README.md>)
+- 升级说明：[docs/2026-04-29-net10-upgrade-and-optimization.md](</D:/Work/QuestionByAi/NSmartProxy/docs/2026-04-29-net10-upgrade-and-optimization.md>)
+- 原理与优化评审：[docs/2026-04-29-nsmartproxy-principle-and-optimization-review.md](</D:/Work/QuestionByAi/NSmartProxy/docs/2026-04-29-nsmartproxy-principle-and-optimization-review.md>)
