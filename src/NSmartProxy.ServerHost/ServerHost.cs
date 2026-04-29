@@ -11,15 +11,15 @@ using System.Threading;
 using NSmartProxy.Data.Config;
 using NSmartProxy.Infrastructure;
 using NSmartProxy.Shared;
-using PeterKottas.DotNetCore.WindowsService.Interfaces;
 
 namespace NSmartProxy.ServerHost
 {
-    public class ServerHost : IMicroService
+    public class ServerHost
     {
 
         private static Mutex mutex = new Mutex(true, "{8639B0AD-A27C-4F15-B3D9-08035D0FC6D6}");
         private static ILog Logger;
+        private int _stopRequested;
 
         #region logger
         public class Log4netLogger : INSmartLogger
@@ -67,13 +67,13 @@ namespace NSmartProxy.ServerHost
         private void InitLogConfig()
         {
             var loggerRepository = LogManager.CreateRepository("NSmartServerRepository");
-            XmlConfigurator.ConfigureAndWatch(loggerRepository, new FileInfo("log4net.config"));
+            XmlConfigurator.ConfigureAndWatch(loggerRepository, new FileInfo(ConfigHelper.ResolveBaseDirectoryFile("log4net.config")));
             Logger = LogManager.GetLogger(loggerRepository.Name, "NSmartServer");
             if (!loggerRepository.Configured) throw new Exception("log config failed.");
 
             Logger.Debug($"*** {NSPVersion.NSmartProxyServerName} ***");
             var builder = new ConfigurationBuilder()
-              .SetBasePath(Directory.GetCurrentDirectory())
+              .SetBasePath(ConfigHelper.AppBaseDirectory)
               .AddJsonFile(ConfigFilePath);
 
             Configuration = builder.Build();
@@ -149,9 +149,16 @@ namespace NSmartProxy.ServerHost
 
         public void Stop()
         {
-            //
-            Console.WriteLine(NSPVersion.NSmartProxyClientName + " STOPPED.");
-            Environment.Exit(0);
+            if (Interlocked.Exchange(ref _stopRequested, 1) != 0)
+            {
+                return;
+            }
+
+            Console.WriteLine(NSPVersion.NSmartProxyServerName + " STOPPED.");
+            if (!Environment.HasShutdownStarted)
+            {
+                Environment.Exit(0);
+            }
         }
     }
 }

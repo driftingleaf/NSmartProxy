@@ -1,25 +1,36 @@
-﻿using System.Diagnostics;
-using System.Dynamic;
-using Newtonsoft.Json;
-using NSmartProxy.Data;
+using System;
+using System.Diagnostics;
 using System.IO;
+using Newtonsoft.Json;
 
 namespace NSmartProxy.Infrastructure
 {
     public static class ConfigHelper
     {
+        public static string AppBaseDirectory => AppContext.BaseDirectory;
+
+        public static string ResolveBaseDirectoryFile(string fileName)
+        {
+            return Path.Combine(AppBaseDirectory, fileName);
+        }
+
         public static string AppSettingFullPath
         {
             get
             {
                 var processModule = Process.GetCurrentProcess().MainModule;
-                var path1 =Path.GetDirectoryName(processModule?.FileName)
+                var path1 = Path.GetDirectoryName(processModule?.FileName)
                        + Path.DirectorySeparatorChar
                        + "appsettings.json";
                 var path2 = "./appsettings.json";
+                var path3 = ResolveBaseDirectoryFile("appsettings.json");
                 if (File.Exists(path1))
                 {
                     return path1;
+                }
+                else if (File.Exists(path3))
+                {
+                    return path3;
                 }
                 else
                 {
@@ -31,7 +42,6 @@ namespace NSmartProxy.Infrastructure
         /// <summary>
         /// 读配置
         /// </summary>
-        /// <returns></returns>
         public static T ReadAllConfig<T>(string path)
         {
             using (var fs = new FileStream(path, FileMode.Open))
@@ -45,8 +55,6 @@ namespace NSmartProxy.Infrastructure
         /// <summary>
         /// 存配置
         /// </summary>
-        /// <param name="config"></param>
-        /// <returns></returns>
         public static T SaveChanges<T>(this T config, string path)
         {
             JsonSerializer serializer = new JsonSerializer();

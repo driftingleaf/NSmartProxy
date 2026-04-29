@@ -78,7 +78,7 @@ namespace NSmartProxy.Client
                 {
                     AppId = app.AppId,
                     Port = app.Port,
-                    Client = new TcpClient()
+                    Client = null
                 });
             }
             return clientModel;
@@ -263,6 +263,9 @@ namespace NSmartProxy.Client
                         return;
                 }
 
+                client.NoDelay = true;
+                client.SetKeepAlive(out _);
+
                 //2.发送clientid和appid信息，向服务端申请连接
                 //连接到位后增加相关的元素并且触发客户端连接事件
                 await client.GetStream().WriteAndFlushAsync(requestBytes, 0, requestBytes.Length);
@@ -272,9 +275,15 @@ namespace NSmartProxy.Client
             catch (Exception ex)
             {
                 Router.Logger.Error("反向连接出错！:" + ex.Message, ex);
-
-                //TODO 回收隧道
-
+                try
+                {
+                    client.Close();
+                }
+                catch
+                {
+                    // ignore
+                }
+                return;
             }
 
             app.Client = client;
@@ -316,27 +325,23 @@ namespace NSmartProxy.Client
         /// <returns></returns>
         public bool ExistClient(int appId, TcpClient client)
         {
-            if (ServiceClientList[appId].Client == null)
-            {
-                return false;
-            }
-            else
-            {
-                return true;
-            }
-
+            return ServiceClientList.TryGetValue(appId, out var worker)
+                   && worker.Client != null
+                   && ReferenceEquals(worker.Client, client);
         }
 
         public bool RemoveClient(int appId, TcpClient client)
         {
-            if (ServiceClientList[appId].Client == null)
+            if (!ServiceClientList.TryGetValue(appId, out var worker)
+                || worker.Client == null
+                || !ReferenceEquals(worker.Client, client))
             {
                 return false;
             }
-            else
-            {
-                return true;
-            }
+
+            worker.Client = null;
+            ConnectedConnections.Remove(client);
+            return true;
         }
 
         public void CloseAllConnections()

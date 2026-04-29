@@ -284,6 +284,12 @@ namespace NSmartProxy
                 _ = ode;
                 Logger.Debug($"外网端口{consumerPort}侦听时被外部终止");
             }
+            catch (SocketException ex) when (
+                ex.SocketErrorCode == SocketError.OperationAborted ||
+                ex.SocketErrorCode == SocketError.Interrupted)
+            {
+                Logger.Debug($"外网端口{consumerPort}侦听时被取消");
+            }
             catch (Exception ex)
             {
                 Logger.Debug($"外网端口{consumerPort}侦听时出错{ex}");

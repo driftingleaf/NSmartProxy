@@ -49,12 +49,13 @@ namespace NSmartProxy
         public static IConfigurationRoot Configuration { get; set; }
         private static LoginInfo _currentLoginInfo;
         private static readonly string ConfigFilePath = ConfigHelper.AppSettingFullPath;
+        private int _stopRequested;
         public void Start(string[] args)
         {
             //appSettingFilePath = Directory.GetCurrentDirectory() + "/appsettings.json";
             //log
             var loggerRepository = LogManager.CreateRepository("NSmartClientRouterRepository");
-            XmlConfigurator.Configure(loggerRepository, new FileInfo("log4net.config"));
+            XmlConfigurator.Configure(loggerRepository, new FileInfo(ConfigHelper.ResolveBaseDirectoryFile("log4net.config")));
             NSmartProxyClient.Logger = LogManager.GetLogger(loggerRepository.Name, "NSmartServerClient");
             if (!loggerRepository.Configured) throw new Exception("log config failed.");
             Console.ForegroundColor = ConsoleColor.Yellow;
@@ -109,9 +110,16 @@ namespace NSmartProxy
 
         public void Stop()
         {
-            //
-            Console.WriteLine(NSPVersion.NSmartProxyServerName + " STOPPED.");
-            Environment.Exit(0);
+            if (Interlocked.Exchange(ref _stopRequested, 1) != 0)
+            {
+                return;
+            }
+
+            Console.WriteLine(NSPVersion.NSmartProxyClientName + " STOPPED.");
+            if (!Environment.HasShutdownStarted)
+            {
+                Environment.Exit(0);
+            }
         }
     }
 }

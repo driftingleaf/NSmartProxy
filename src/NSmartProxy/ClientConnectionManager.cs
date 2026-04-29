@@ -95,8 +95,8 @@ namespace NSmartProxy
                     await iClient.GetStream().WriteByteAndFlushAsync((byte)result.ResultState);
                 }
 
-                //读取头四个字节
-                byte[] bytes = new byte[4];
+                //读取 clientId(2 bytes) + appId(1 byte)
+                byte[] bytes = new byte[3];
                 if (await iClient.GetStream().ReadNextSTLengthBytes(bytes) < 1)
                 {
                     Server.Logger.Debug("服务端read出错，关闭连接");

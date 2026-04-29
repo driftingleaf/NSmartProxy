@@ -414,7 +414,6 @@ namespace NSmartProxy.Client
             //事件循环2
             try
             {
-                byte[] buffer = new byte[10];
                 NetworkStream providerClientStream = providerClient.GetStream();
                 //接收首条消息，首条消息中返回的是appid和客户端
                 //消费端长连接，需要在server端保活
@@ -424,15 +423,15 @@ namespace NSmartProxy.Client
                 {
                     try
                     {
-
-                        int readByteCount = await providerClientStream.ReadAsync(buffer.AsMemory()); //双端标记S0001
-                        if (readByteCount == 0)
+                        var controlMethodResult = await TryReadControlMethod(providerClientStream).ConfigureAwait(false);
+                        if (!controlMethodResult.HasValue)
                         {
                             //抛出错误以便上层重启客户端。
                             _waiter.TrySetResult(new Exception($"连接{appId}被服务器主动切断，已断开连接"));
                             return;
-
                         }
+
+                        controlMethod = controlMethodResult.Value;
                     }
                     catch (Exception ex)
                     {
@@ -442,9 +441,6 @@ namespace NSmartProxy.Client
                         throw;
                     }
 
-                    //TODO 4 如果是UDP则直接转发，之后返回上层
-                    controlMethod = (ControlMethod)buffer[0];
-
                     switch (controlMethod)
                     {
                         case ControlMethod.KeepAlive: continue;
@@ -452,14 +448,14 @@ namespace NSmartProxy.Client
                             await OpenUdpTransmission(appId, providerClient);
                             continue;//udp 发送后继续循环，方法里的ConnectAppToServer会再拉起一个新连接
                         case ControlMethod.TCPTransfer:
-                            var tranferTokenId = StringUtil.ReadInt32(buffer.AsSpan(1, 4));
+                            int tranferTokenId = await ReadTransferTokenId(providerClientStream).ConfigureAwait(false);
                             await OpenTcpTransmission(appId, providerClient, toTargetServer, tranferTokenId);
                             return;//tcp 开启隧道，并且不再利用此连接
                         case ControlMethod.ForceClose:
                             Logger.Info("客户端在别处被抢登，当前被强制下线。");
                             await Close();
                             return;
-                        default: throw new Exception("非法请求:" + buffer[0]);
+                        default: throw new Exception("非法请求:" + (byte)controlMethod);
                     }
                 } //while (controlMethod == ControlMethod.KeepAlive) ;
 
@@ -473,6 +469,24 @@ namespace NSmartProxy.Client
                 throw;
             }
 
+        }
+
+        private static async Task<ControlMethod?> TryReadControlMethod(NetworkStream providerClientStream)
+        {
+            byte[] methodBuffer = new byte[1];
+            bool success = await providerClientStream.TryReadExactlyAsync(methodBuffer).ConfigureAwait(false);
+            return success ? (ControlMethod)methodBuffer[0] : null;
+        }
+
+        private static async Task<int> ReadTransferTokenId(NetworkStream providerClientStream)
+        {
+            byte[] tokenIdBytes = new byte[4];
+            if (!await providerClientStream.TryReadExactlyAsync(tokenIdBytes).ConfigureAwait(false))
+            {
+                throw new IOException("读取 TCP 传输令牌失败。");
+            }
+
+            return StringUtil.ReadInt32(tokenIdBytes.AsSpan());
         }
 
         private object GetUdpClientLocker = new object();
